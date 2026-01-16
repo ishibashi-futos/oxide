@@ -1,6 +1,7 @@
 mod event;
 mod layout;
 mod main_pane;
+mod bottom_bar;
 mod top_bar;
 
 use std::io::{self, Stdout};
@@ -25,6 +26,7 @@ use event::{
 };
 use layout::{split_main, split_panes};
 use main_pane::render_entry_list;
+use bottom_bar::render_bottom_bar;
 use top_bar::render_top_bar;
 
 pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
@@ -74,7 +76,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
 
 fn draw(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
-    let (top, main) = split_main(area);
+    let (top, main, bottom) = split_main(area);
     render_top_bar(frame, top, app);
     let (left, right) = split_panes(main);
     render_entry_list(frame, left, &app.parent_entries, None, "parent", "");
@@ -86,6 +88,7 @@ fn draw(frame: &mut Frame<'_>, app: &App) {
         "current",
         app.search_text(),
     );
+    render_bottom_bar(frame, bottom, app);
 }
 
 struct TerminalGuard {
