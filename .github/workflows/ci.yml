@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["*"]
+  pull_request:
+
+jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.92.0
+          components: clippy
+      - name: cargo test
+        run: cargo test --all
+
+  build:
+    name: build artifacts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_ext: tar.gz
+            bin_path: target/x86_64-unknown-linux-gnu/release/ox
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_ext: zip
+            bin_path: target\\x86_64-pc-windows-msvc\\release\\ox.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_ext: tar.gz
+            bin_path: target/aarch64-apple-darwin/release/ox
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.92.0
+          targets: ${{ matrix.target }}
+      - name: Build (release)
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Package artifact (unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp ${{ matrix.bin_path }} dist/ox
+          tar -czf ox-${{ matrix.target }}.${{ matrix.artifact_ext }} -C dist ox
+      - name: Package artifact (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "${{ matrix.bin_path }}" dist\ox.exe
+          Compress-Archive -Path dist\ox.exe -DestinationPath "ox-${{ matrix.target }}.${{ matrix.artifact_ext }}"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: ox-${{ matrix.target }}
+          path: ox-${{ matrix.target }}.${{ matrix.artifact_ext }}
+          if-no-files-found: error
