@@ -20,7 +20,7 @@ use crate::{
 
 use event::{
     is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event,
-    is_parent_event, is_quit_event,
+    is_parent_event, is_quit_event, is_toggle_hidden_event,
 };
 use layout::{split_main, split_panes};
 use main_pane::render_entry_list;
@@ -52,6 +52,9 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             }
             if is_parent_event(key) {
                 app.move_to_parent()?;
+            }
+            if is_toggle_hidden_event(key) {
+                app.toggle_hidden()?;
             }
         }
     }

@@ -44,6 +44,12 @@ pub fn is_parent_event(key: KeyEvent) -> bool {
             || key.modifiers.contains(KeyModifiers::SUPER))
 }
 
+pub fn is_toggle_hidden_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press
+        && key.code == KeyCode::Char('h')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +106,17 @@ mod tests {
     fn is_parent_event_allows_left_bracket() {
         let key = KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE);
         assert!(is_parent_event(key));
+    }
+
+    #[test]
+    fn is_toggle_hidden_event_requires_ctrl_h() {
+        let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL);
+        assert!(is_toggle_hidden_event(key));
+    }
+
+    #[test]
+    fn is_toggle_hidden_event_rejects_plain_h() {
+        let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
+        assert!(!is_toggle_hidden_event(key));
     }
 }

@@ -13,6 +13,7 @@ pub struct App {
     pub entries: Vec<Entry>,
     pub parent_entries: Vec<Entry>,
     pub cursor: Option<usize>,
+    pub show_hidden: bool,
 }
 
 impl App {
@@ -21,20 +22,29 @@ impl App {
         entries: Vec<Entry>,
         parent_entries: Vec<Entry>,
         cursor: Option<usize>,
+        show_hidden: bool,
     ) -> Self {
         Self {
             current_dir,
             entries,
             parent_entries,
             cursor,
+            show_hidden,
         }
     }
 
     pub fn load(current_dir: PathBuf) -> AppResult<Self> {
-        let entries = list_entries(&current_dir)?;
-        let parent_entries = list_parent_entries(&current_dir)?;
+        let show_hidden = false;
+        let entries = list_entries(&current_dir, show_hidden)?;
+        let parent_entries = list_parent_entries(&current_dir, show_hidden)?;
         let cursor = if entries.is_empty() { None } else { Some(0) };
-        Ok(Self::new(current_dir, entries, parent_entries, cursor))
+        Ok(Self::new(
+            current_dir,
+            entries,
+            parent_entries,
+            cursor,
+            show_hidden,
+        ))
     }
 
     pub fn move_cursor_up(&mut self) {
@@ -90,19 +100,52 @@ impl App {
         self.cursor.and_then(|index| self.entries.get(index))
     }
 
+    pub fn toggle_hidden(&mut self) -> AppResult<()> {
+        let selected_name = self.selected_entry().map(|entry| entry.name.clone());
+        let selected_index = self.cursor;
+        self.show_hidden = !self.show_hidden;
+        self.reload_entries()?;
+        self.cursor = resolve_cursor(&self.entries, selected_name.as_deref(), selected_index);
+        Ok(())
+    }
+
     fn refresh(&mut self) -> AppResult<()> {
-        self.entries = list_entries(&self.current_dir)?;
-        self.parent_entries = list_parent_entries(&self.current_dir)?;
+        self.reload_entries()?;
         self.cursor = if self.entries.is_empty() { None } else { Some(0) };
+        Ok(())
+    }
+
+    fn reload_entries(&mut self) -> AppResult<()> {
+        self.entries = list_entries(&self.current_dir, self.show_hidden)?;
+        self.parent_entries = list_parent_entries(&self.current_dir, self.show_hidden)?;
         Ok(())
     }
 }
 
-fn list_parent_entries(current_dir: &Path) -> AppResult<Vec<Entry>> {
+fn list_parent_entries(current_dir: &Path, show_hidden: bool) -> AppResult<Vec<Entry>> {
     let Some(parent) = current_dir.parent() else {
         return Ok(Vec::new());
     };
-    list_entries(parent)
+    list_entries(parent, show_hidden)
+}
+
+fn resolve_cursor(
+    entries: &[Entry],
+    selected_name: Option<&str>,
+    selected_index: Option<usize>,
+) -> Option<usize> {
+    if entries.is_empty() {
+        return None;
+    }
+    if let Some(name) = selected_name {
+        if let Some(index) = entries.iter().position(|entry| entry.name == name) {
+            return Some(index);
+        }
+        if let Some(index) = selected_index {
+            return Some(index.saturating_sub(1).min(entries.len().saturating_sub(1)));
+        }
+    }
+    Some(0)
 }
 
 #[cfg(test)]
@@ -125,6 +168,7 @@ mod tests {
             ],
             Vec::new(),
             Some(0),
+            false,
         );
 
         app.move_cursor_up();
@@ -148,6 +192,7 @@ mod tests {
             ],
             Vec::new(),
             Some(1),
+            false,
         );
 
         app.move_cursor_up();
@@ -171,6 +216,7 @@ mod tests {
             ],
             Vec::new(),
             Some(1),
+            false,
         );
 
         app.move_cursor_down();
@@ -194,6 +240,7 @@ mod tests {
             ],
             Vec::new(),
             Some(0),
+            false,
         );
 
         app.move_cursor_down();
@@ -216,6 +263,7 @@ mod tests {
             entries,
             Vec::new(),
             Some(0),
+            false,
         );
 
         let opener = RecordingOpener::default();
@@ -240,6 +288,7 @@ mod tests {
             entries,
             Vec::new(),
             Some(0),
+            false,
         );
 
         let opener = RecordingOpener::default();
@@ -266,6 +315,7 @@ mod tests {
             entries,
             Vec::new(),
             Some(0),
+            false,
         );
 
         app.enter_selected_dir().unwrap();
@@ -284,6 +334,63 @@ mod tests {
         app.move_to_parent().unwrap();
 
         assert_eq!(app.current_dir, temp_dir.path());
+    }
+
+    #[test]
+    fn toggle_hidden_refreshes_entries() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let hidden = temp_dir.path().join(".secret");
+        std::fs::write(&hidden, "hidden").unwrap();
+
+        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        assert!(app.entries.is_empty());
+
+        app.toggle_hidden().unwrap();
+
+        assert_eq!(
+            app.entries,
+            vec![Entry {
+                name: ".secret".to_string(),
+                is_dir: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn toggle_hidden_keeps_cursor_on_same_entry() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(temp_dir.path().join(".secret"), "hidden").unwrap();
+        std::fs::write(temp_dir.path().join("a.txt"), "a").unwrap();
+        std::fs::write(temp_dir.path().join("b.txt"), "b").unwrap();
+
+        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        app.cursor = Some(1);
+
+        app.toggle_hidden().unwrap();
+
+        assert_eq!(
+            app.selected_entry().map(|entry| entry.name.as_str()),
+            Some("b.txt")
+        );
+    }
+
+    #[test]
+    fn toggle_hidden_moves_to_previous_when_hidden_selected() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(temp_dir.path().join(".secret"), "hidden").unwrap();
+        std::fs::write(temp_dir.path().join("a.txt"), "a").unwrap();
+        std::fs::write(temp_dir.path().join("b.txt"), "b").unwrap();
+
+        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        app.toggle_hidden().unwrap();
+        app.cursor = Some(0);
+
+        app.toggle_hidden().unwrap();
+
+        assert_eq!(
+            app.selected_entry().map(|entry| entry.name.as_str()),
+            Some("a.txt")
+        );
     }
 
     #[derive(Default)]

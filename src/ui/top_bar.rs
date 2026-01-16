@@ -33,6 +33,7 @@ mod tests {
             }],
             Vec::new(),
             Some(0),
+            false,
         );
 
         let area = Rect::new(0, 0, 30, 1);
@@ -65,6 +66,7 @@ mod tests {
             ],
             Vec::new(),
             Some(1),
+            false,
         );
 
         let area = Rect::new(0, 0, 30, 1);
