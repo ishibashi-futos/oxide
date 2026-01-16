@@ -2,14 +2,21 @@ use std::path::Path;
 
 use crate::error::AppResult;
 
-pub fn list_entries(path: &Path) -> AppResult<Vec<String>> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub name: String,
+    pub is_dir: bool,
+}
+
+pub fn list_entries(path: &Path) -> AppResult<Vec<Entry>> {
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
-        entries.push(name);
+        let is_dir = entry.file_type()?.is_dir();
+        entries.push(Entry { name, is_dir });
     }
-    entries.sort();
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(entries)
 }
 
@@ -28,6 +35,35 @@ mod tests {
 
         let entries = list_entries(temp_dir.path()).unwrap();
 
-        assert_eq!(entries, vec!["alpha.txt".to_string(), "beta.txt".to_string()]);
+        assert_eq!(
+            entries,
+            vec![
+                Entry {
+                    name: "alpha.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "beta.txt".to_string(),
+                    is_dir: false,
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn list_entries_marks_directories() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().join("child");
+        fs::create_dir(&dir).unwrap();
+
+        let entries = list_entries(temp_dir.path()).unwrap();
+
+        assert_eq!(
+            entries,
+            vec![Entry {
+                name: "child".to_string(),
+                is_dir: true,
+            }]
+        );
     }
 }

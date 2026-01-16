@@ -1,3 +1,3 @@
 mod entries;
 
-pub use entries::list_entries;
+pub use entries::{list_entries, Entry};

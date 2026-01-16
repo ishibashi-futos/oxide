@@ -13,18 +13,26 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Frame, Terminal};
 
-use crate::{app::App, error::AppResult};
+use crate::{
+    app::{App, EntryOpener},
+    error::AppResult,
+};
 
-use event::{is_cursor_down_event, is_cursor_up_event, is_quit_event};
-use layout::split_main;
-use main_pane::render_directory_list;
+use event::{
+    is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event,
+    is_parent_event, is_quit_event,
+};
+use layout::{split_main, split_panes};
+use main_pane::render_entry_list;
 use top_bar::render_top_bar;
 
-pub fn run(mut app: App) -> AppResult<()> {
+pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
     let mut guard = TerminalGuard::new()?;
 
     loop {
-        guard.terminal_mut().draw(|frame| draw(frame, &app))?;
+        guard
+            .terminal_mut()
+            .draw(|frame| draw(frame, &app))?;
 
         if let Event::Key(key) = crossterm_event::read()? {
             if is_quit_event(key) {
@@ -36,6 +44,15 @@ pub fn run(mut app: App) -> AppResult<()> {
             if is_cursor_down_event(key) {
                 app.move_cursor_down();
             }
+            if is_enter_event(key) {
+                app.open_selected(opener)?;
+            }
+            if is_enter_dir_event(key) {
+                app.enter_selected_dir()?;
+            }
+            if is_parent_event(key) {
+                app.move_to_parent()?;
+            }
         }
     }
 
@@ -46,7 +63,9 @@ fn draw(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
     let (top, main) = split_main(area);
     render_top_bar(frame, top, app);
-    render_directory_list(frame, main, app);
+    let (left, right) = split_panes(main);
+    render_entry_list(frame, left, &app.parent_entries, None, "parent");
+    render_entry_list(frame, right, &app.entries, app.cursor, "current");
 }
 
 struct TerminalGuard {
