@@ -7,9 +7,29 @@ on:
   pull_request:
 
 jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Path filter
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'src/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+
   test:
     name: cargo test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.test == 'true'
     strategy:
       fail-fast: false
       matrix:
