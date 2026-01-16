@@ -21,6 +21,23 @@
 - Decouple the Core layer from `ratatui` to allow pure logic testing without TUI dependencies.
 - Implement UI Component Tests for critical elements (Tabs, Status Bar) using `ratatui::backend::TestBackend`.
 
+## STRUCTURE (CORE / UI)
+
+- Keep `core` independent from `ratatui`. UI must only depend on Core, never the reverse.
+- Prefer small modules over growing `mod.rs`. `mod.rs` should mainly re-export submodules.
+- Suggested Core modules:
+  - `core/entries.rs` (listing/filtering/sorting)
+  - `core/navigation.rs` (path move, parent/child)
+  - `core/selection.rs` (cursor, selection rules)
+  - `core/metadata.rs` (size/time)
+  - `core/git.rs` (branch info)
+  - `core/config.rs` (config read/parse)
+- Suggested UI modules:
+  - `ui/layout.rs` (area splitting only)
+  - `ui/top_bar.rs` / `ui/main_pane.rs` / `ui/bottom_bar.rs` / `ui/tabs.rs`
+  - `ui/event.rs` (key mapping to messages)
+- UI communicates with Core via explicit messages (event → intent → state update).
+
 ## PLATFORM ABSTRACTION
 
 - Treat OS-specific paths and behaviors as external dependencies.
