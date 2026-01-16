@@ -50,6 +50,27 @@ pub fn is_toggle_hidden_event(key: KeyEvent) -> bool {
         && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
+pub fn search_char(key: KeyEvent) -> Option<char> {
+    if key.kind != KeyEventKind::Press {
+        return None;
+    }
+    let KeyCode::Char(ch) = key.code else {
+        return None;
+    };
+    if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
+        return Some(ch);
+    }
+    None
+}
+
+pub fn is_search_reset_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::Esc
+}
+
+pub fn is_search_backspace_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::Backspace
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +139,35 @@ mod tests {
     fn is_toggle_hidden_event_rejects_plain_h() {
         let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
         assert!(!is_toggle_hidden_event(key));
+    }
+
+    #[test]
+    fn search_char_accepts_plain_char() {
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(search_char(key), Some('a'));
+    }
+
+    #[test]
+    fn search_char_rejects_ctrl_char() {
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert_eq!(search_char(key), None);
+    }
+
+    #[test]
+    fn search_char_rejects_non_char() {
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(search_char(key), None);
+    }
+
+    #[test]
+    fn is_search_reset_event_accepts_escape() {
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(is_search_reset_event(key));
+    }
+
+    #[test]
+    fn is_search_backspace_event_accepts_backspace() {
+        let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
+        assert!(is_search_backspace_event(key));
     }
 }

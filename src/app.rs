@@ -14,6 +14,8 @@ pub struct App {
     pub parent_entries: Vec<Entry>,
     pub cursor: Option<usize>,
     pub show_hidden: bool,
+    search_buffer: String,
+    search_origin: Option<usize>,
 }
 
 impl App {
@@ -30,6 +32,8 @@ impl App {
             parent_entries,
             cursor,
             show_hidden,
+            search_buffer: String::new(),
+            search_origin: None,
         }
     }
 
@@ -109,6 +113,41 @@ impl App {
         Ok(())
     }
 
+    pub fn search_text(&self) -> &str {
+        &self.search_buffer
+    }
+
+    pub fn append_search_char(&mut self, ch: char) {
+        if self.entries.is_empty() {
+            return;
+        }
+        if self.search_buffer.is_empty() {
+            self.search_origin = self.cursor;
+        }
+        self.search_buffer.push(ch);
+        self.apply_search();
+    }
+
+    pub fn backspace_search_char(&mut self) {
+        if self.search_buffer.is_empty() {
+            return;
+        }
+        self.search_buffer.pop();
+        if self.search_buffer.is_empty() {
+            self.restore_search_origin();
+            return;
+        }
+        self.apply_search();
+    }
+
+    pub fn reset_search(&mut self) {
+        if self.search_buffer.is_empty() {
+            return;
+        }
+        self.search_buffer.clear();
+        self.restore_search_origin();
+    }
+
     fn refresh(&mut self) -> AppResult<()> {
         self.reload_entries()?;
         self.cursor = if self.entries.is_empty() { None } else { Some(0) };
@@ -118,7 +157,35 @@ impl App {
     fn reload_entries(&mut self) -> AppResult<()> {
         self.entries = list_entries(&self.current_dir, self.show_hidden)?;
         self.parent_entries = list_parent_entries(&self.current_dir, self.show_hidden)?;
+        self.clear_search_state();
         Ok(())
+    }
+
+    fn apply_search(&mut self) {
+        if self.search_buffer.is_empty() {
+            return;
+        }
+        let needle = self.search_buffer.as_str();
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.name.starts_with(needle))
+        {
+            self.cursor = Some(index);
+        }
+    }
+
+    fn clear_search_state(&mut self) {
+        self.search_buffer.clear();
+        self.search_origin = None;
+    }
+
+    fn restore_search_origin(&mut self) {
+        let origin = self.search_origin.take();
+        self.cursor = match origin {
+            Some(index) => clamp_cursor(&self.entries, index),
+            None => clamp_cursor(&self.entries, 0).or(self.cursor),
+        };
     }
 }
 
@@ -146,6 +213,14 @@ fn resolve_cursor(
         }
     }
     Some(0)
+}
+
+fn clamp_cursor(entries: &[Entry], index: usize) -> Option<usize> {
+    if entries.is_empty() {
+        None
+    } else {
+        Some(index.min(entries.len().saturating_sub(1)))
+    }
 }
 
 #[cfg(test)]
@@ -391,6 +466,97 @@ mod tests {
             app.selected_entry().map(|entry| entry.name.as_str()),
             Some("a.txt")
         );
+    }
+
+    #[test]
+    fn incremental_search_moves_cursor_and_resets() {
+        let mut app = App::new(
+            PathBuf::from("."),
+            vec![
+                Entry {
+                    name: "alpha.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "beta.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "bravo.txt".to_string(),
+                    is_dir: false,
+                },
+            ],
+            Vec::new(),
+            Some(0),
+            false,
+        );
+
+        app.append_search_char('b');
+        assert_eq!(app.cursor, Some(1));
+
+        app.append_search_char('r');
+        assert_eq!(app.cursor, Some(2));
+
+        app.reset_search();
+        assert_eq!(app.cursor, Some(0));
+    }
+
+    #[test]
+    fn incremental_search_keeps_cursor_when_no_match() {
+        let mut app = App::new(
+            PathBuf::from("."),
+            vec![
+                Entry {
+                    name: "alpha.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "beta.txt".to_string(),
+                    is_dir: false,
+                },
+            ],
+            Vec::new(),
+            Some(1),
+            false,
+        );
+
+        app.append_search_char('z');
+
+        assert_eq!(app.cursor, Some(1));
+    }
+
+    #[test]
+    fn incremental_search_backspace_restores_origin() {
+        let mut app = App::new(
+            PathBuf::from("."),
+            vec![
+                Entry {
+                    name: "alpha.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "beta.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "bravo.txt".to_string(),
+                    is_dir: false,
+                },
+            ],
+            Vec::new(),
+            Some(0),
+            false,
+        );
+
+        app.append_search_char('b');
+        app.append_search_char('r');
+        assert_eq!(app.cursor, Some(2));
+
+        app.backspace_search_char();
+        assert_eq!(app.cursor, Some(1));
+
+        app.backspace_search_char();
+        assert_eq!(app.cursor, Some(0));
     }
 
     #[derive(Default)]

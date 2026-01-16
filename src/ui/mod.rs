@@ -20,7 +20,8 @@ use crate::{
 
 use event::{
     is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event,
-    is_parent_event, is_quit_event, is_toggle_hidden_event,
+    is_parent_event, is_quit_event, is_search_backspace_event, is_search_reset_event,
+    is_toggle_hidden_event, search_char,
 };
 use layout::{split_main, split_panes};
 use main_pane::render_entry_list;
@@ -56,6 +57,15 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             if is_toggle_hidden_event(key) {
                 app.toggle_hidden()?;
             }
+            if is_search_reset_event(key) {
+                app.reset_search();
+            }
+            if is_search_backspace_event(key) {
+                app.backspace_search_char();
+            }
+            if let Some(ch) = search_char(key) {
+                app.append_search_char(ch);
+            }
         }
     }
 
@@ -67,8 +77,15 @@ fn draw(frame: &mut Frame<'_>, app: &App) {
     let (top, main) = split_main(area);
     render_top_bar(frame, top, app);
     let (left, right) = split_panes(main);
-    render_entry_list(frame, left, &app.parent_entries, None, "parent");
-    render_entry_list(frame, right, &app.entries, app.cursor, "current");
+    render_entry_list(frame, left, &app.parent_entries, None, "parent", "");
+    render_entry_list(
+        frame,
+        right,
+        &app.entries,
+        app.cursor,
+        "current",
+        app.search_text(),
+    );
 }
 
 struct TerminalGuard {
