@@ -83,7 +83,10 @@ mod tests {
         let worker = GitWorker::new();
         worker.request(temp_dir.path().to_path_buf());
 
-        let result = worker.result_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let result = worker
+            .result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
 
         assert_eq!(result.path, temp_dir.path());
         assert!(result.branch.is_none());

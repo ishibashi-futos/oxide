@@ -1,4 +1,4 @@
-use ratatui::{layout::Rect, widgets::Paragraph, Frame};
+use ratatui::{Frame, layout::Rect, widgets::Paragraph};
 
 use crate::app::App;
 
@@ -15,11 +15,11 @@ pub fn render_top_bar(frame: &mut Frame<'_>, area: Rect, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Entry;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
-    use ratatui::{layout::Rect, Terminal};
+    use ratatui::{Terminal, layout::Rect};
     use std::path::PathBuf;
-    use crate::core::Entry;
 
     #[test]
     fn render_top_bar_shows_current_path_and_active_item() {

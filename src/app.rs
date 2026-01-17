@@ -155,7 +155,11 @@ impl App {
 
     fn refresh(&mut self) -> AppResult<()> {
         self.reload_entries()?;
-        self.cursor = if self.entries.is_empty() { None } else { Some(0) };
+        self.cursor = if self.entries.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
         Ok(())
     }
 
@@ -374,10 +378,7 @@ mod tests {
         let opener = RecordingOpener::default();
         app.open_selected(&opener).unwrap();
 
-        assert_eq!(
-            opener.opened_paths.borrow().as_slice(),
-            &[file.clone()]
-        );
+        assert_eq!(opener.opened_paths.borrow().as_slice(), &[file.clone()]);
     }
 
     #[test]

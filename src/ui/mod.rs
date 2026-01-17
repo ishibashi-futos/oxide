@@ -1,7 +1,7 @@
+mod bottom_bar;
 mod event;
 mod layout;
 mod main_pane;
-mod bottom_bar;
 mod metadata_worker;
 mod top_bar;
 
@@ -11,9 +11,9 @@ use crossterm::{
     cursor::{Hide, Show},
     event::{self as crossterm_event, Event},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Frame, Terminal};
+use ratatui::{Frame, Terminal, backend::CrosstermBackend};
 use std::time::Duration;
 
 use crate::{
@@ -21,17 +21,17 @@ use crate::{
     error::AppResult,
 };
 
+use crate::core::GitWorker;
+use bottom_bar::{format_metadata, render_bottom_bar};
 use event::{
-    is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event,
-    is_parent_event, is_quit_event, is_search_backspace_event, is_search_reset_event,
-    is_toggle_hidden_event, search_char,
+    is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event, is_parent_event,
+    is_quit_event, is_search_backspace_event, is_search_reset_event, is_toggle_hidden_event,
+    search_char,
 };
 use layout::{split_main, split_panes};
 use main_pane::render_entry_list;
-use bottom_bar::{format_metadata, render_bottom_bar};
 use metadata_worker::MetadataWorker;
 use top_bar::render_top_bar;
-use crate::core::GitWorker;
 
 pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
     let mut guard = TerminalGuard::new()?;
@@ -77,9 +77,14 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             last_git_dir = Some(current_dir);
         }
 
-        guard
-            .terminal_mut()
-            .draw(|frame| draw(frame, &app, metadata_display.as_deref(), git_display.as_deref()))?;
+        guard.terminal_mut().draw(|frame| {
+            draw(
+                frame,
+                &app,
+                metadata_display.as_deref(),
+                git_display.as_deref(),
+            )
+        })?;
 
         if crossterm_event::poll(Duration::from_millis(200))? {
             if let Event::Key(key) = crossterm_event::read()? {
@@ -120,7 +125,12 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
     Ok(())
 }
 
-fn draw(frame: &mut Frame<'_>, app: &App, metadata_display: Option<&str>, git_display: Option<&str>) {
+fn draw(
+    frame: &mut Frame<'_>,
+    app: &App,
+    metadata_display: Option<&str>,
+    git_display: Option<&str>,
+) {
     let area = frame.area();
     let (top, main, bottom) = split_main(area);
     render_top_bar(frame, top, app);

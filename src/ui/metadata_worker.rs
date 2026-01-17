@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use crate::core::{entry_metadata, EntryMetadata};
+use crate::core::{EntryMetadata, entry_metadata};
 
 pub struct MetadataWorker {
     request_tx: Sender<PathBuf>,
@@ -55,7 +55,10 @@ mod tests {
         let worker = MetadataWorker::new();
         worker.request(file_path.clone());
 
-        let result = worker.result_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let result = worker
+            .result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
 
         assert_eq!(result.path, file_path);
         assert!(result.metadata.is_some());

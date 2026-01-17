@@ -2,6 +2,6 @@ mod entries;
 mod git;
 mod metadata;
 
-pub use entries::{list_entries, Entry};
+pub use entries::{Entry, list_entries};
 pub use git::GitWorker;
-pub use metadata::{entry_metadata, EntryMetadata};
+pub use metadata::{EntryMetadata, entry_metadata};

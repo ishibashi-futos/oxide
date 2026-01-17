@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
-    Frame,
 };
 
 use crate::core::Entry;
@@ -70,15 +70,13 @@ fn highlight_style(search_active: bool) -> Style {
 }
 
 fn secondary_match_style() -> Style {
-    Style::default().fg(Color::LightBlue).add_modifier(Modifier::DIM)
+    Style::default()
+        .fg(Color::LightBlue)
+        .add_modifier(Modifier::DIM)
 }
 
 fn highlight_symbol(search_text: &str) -> &'static str {
-    if search_text.is_empty() {
-        "> "
-    } else {
-        "? "
-    }
+    if search_text.is_empty() { "> " } else { "? " }
 }
 
 fn split_list_and_footer(area: Rect, show_footer: bool) -> (Rect, Option<Rect>) {
@@ -157,10 +155,10 @@ fn search_matches(entries: &[Entry], search_text: &str) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Entry;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
-    use ratatui::{layout::Rect, Terminal};
-    use crate::core::Entry;
+    use ratatui::{Terminal, layout::Rect};
 
     #[test]
     fn render_directory_list_shows_entries() {

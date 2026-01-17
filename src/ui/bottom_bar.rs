@@ -1,5 +1,5 @@
 use chrono::{DateTime, Local};
-use ratatui::{layout::Rect, widgets::Paragraph, Frame};
+use ratatui::{Frame, layout::Rect, widgets::Paragraph};
 
 use crate::core::EntryMetadata;
 
@@ -17,7 +17,9 @@ fn build_bottom_bar(metadata: Option<&str>, git: Option<&str>, width: u16) -> St
     let left = metadata
         .map(|value| value.to_string())
         .unwrap_or_else(placeholder_metadata);
-    let right = git.map(|value| value.to_string()).unwrap_or_else(placeholder_git);
+    let right = git
+        .map(|value| value.to_string())
+        .unwrap_or_else(placeholder_git);
     let left_len = left.chars().count();
     let right_len = right.chars().count();
     let total_width = width as usize;
@@ -69,7 +71,7 @@ mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
-    use ratatui::{layout::Rect, Terminal};
+    use ratatui::{Terminal, layout::Rect};
     use std::time::{Duration, UNIX_EPOCH};
 
     #[test]
