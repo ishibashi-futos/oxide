@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::core::{entry_metadata, Entry, EntryMetadata, list_entries};
+use crate::core::{Entry, list_entries};
 use crate::error::AppResult;
 
 pub trait EntryOpener {
@@ -104,10 +104,9 @@ impl App {
         self.cursor.and_then(|index| self.entries.get(index))
     }
 
-    pub fn selected_entry_metadata(&self) -> Option<EntryMetadata> {
+    pub fn selected_entry_path(&self) -> Option<PathBuf> {
         let selected = self.selected_entry()?;
-        let path = self.current_dir.join(&selected.name);
-        entry_metadata(&path).ok()
+        Some(self.current_dir.join(&selected.name))
     }
 
     pub fn toggle_hidden(&mut self) -> AppResult<()> {

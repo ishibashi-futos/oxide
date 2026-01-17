@@ -1,21 +1,20 @@
+use chrono::{DateTime, Local};
 use ratatui::{layout::Rect, widgets::Paragraph, Frame};
 
-use crate::app::App;
 use crate::core::EntryMetadata;
 
-pub fn render_bottom_bar(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let bar = Paragraph::new(build_bottom_bar(app.selected_entry_metadata()));
+pub fn render_bottom_bar(frame: &mut Frame<'_>, area: Rect, metadata: Option<&str>) {
+    let bar = Paragraph::new(build_bottom_bar(metadata));
     frame.render_widget(bar, area);
 }
 
-fn build_bottom_bar(metadata: Option<EntryMetadata>) -> String {
-    match metadata {
-        Some(metadata) => format_metadata(&metadata),
-        None => String::new(),
-    }
+fn build_bottom_bar(metadata: Option<&str>) -> String {
+    metadata
+        .map(|value| value.to_string())
+        .unwrap_or_else(placeholder_metadata)
 }
 
-fn format_metadata(metadata: &EntryMetadata) -> String {
+pub fn format_metadata(metadata: &EntryMetadata) -> String {
     format!(
         "size: {} | modified: {}",
         format_size(metadata.size),
@@ -23,11 +22,13 @@ fn format_metadata(metadata: &EntryMetadata) -> String {
     )
 }
 
+fn placeholder_metadata() -> String {
+    "size: - | modified: -".to_string()
+}
+
 fn format_modified(modified: std::time::SystemTime) -> String {
-    match modified.duration_since(std::time::UNIX_EPOCH) {
-        Ok(duration) => format!("{}s since epoch", duration.as_secs()),
-        Err(_) => "unknown".to_string(),
-    }
+    let datetime: DateTime<Local> = modified.into();
+    datetime.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 fn format_size(size: u64) -> String {
@@ -51,10 +52,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::{layout::Rect, Terminal};
-    use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
-
-    use crate::core::Entry;
 
     #[test]
     fn format_metadata_uses_size_and_modified() {
@@ -65,10 +63,8 @@ mod tests {
 
         let formatted = format_metadata(&metadata);
 
-        assert_eq!(
-            formatted,
-            "size: 12 B | modified: 0s since epoch"
-        );
+        assert!(formatted.starts_with("size: 12 B | modified: "));
+        assert_datetime_format(formatted.trim_start_matches("size: 12 B | modified: "));
     }
 
     #[test]
@@ -94,26 +90,17 @@ mod tests {
 
     #[test]
     fn render_bottom_bar_shows_selected_entry_metadata() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let file_path = temp_dir.path().join("note.txt");
-        std::fs::write(&file_path, "hello").unwrap();
-
-        let app = App::new(
-            PathBuf::from(temp_dir.path()),
-            vec![Entry {
-                name: "note.txt".to_string(),
-                is_dir: false,
-            }],
-            Vec::new(),
-            Some(0),
-            false,
-        );
+        let metadata = EntryMetadata {
+            size: 5,
+            modified: UNIX_EPOCH + Duration::from_secs(0),
+        };
+        let metadata_line = format_metadata(&metadata);
 
         let backend = TestBackend::new(60, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 60, 1);
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, &app))
+            .draw(|frame| render_bottom_bar(frame, area, Some(&metadata_line)))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -121,6 +108,37 @@ mod tests {
 
         assert!(line.contains("size: 5 B"));
         assert!(line.contains("modified:"));
+    }
+
+    #[test]
+    fn render_bottom_bar_shows_placeholder_when_missing() {
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 30, 1);
+        terminal
+            .draw(|frame| render_bottom_bar(frame, area, None))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 30);
+
+        assert!(line.contains("size: - | modified: -"));
+    }
+
+    fn assert_datetime_format(value: &str) {
+        let chars: Vec<char> = value.chars().collect();
+        assert_eq!(chars.len(), 19);
+        assert_eq!(chars[4], '-');
+        assert_eq!(chars[7], '-');
+        assert_eq!(chars[10], ' ');
+        assert_eq!(chars[13], ':');
+        assert_eq!(chars[16], ':');
+        for (index, ch) in chars.iter().enumerate() {
+            if matches!(index, 4 | 7 | 10 | 13 | 16) {
+                continue;
+            }
+            assert!(ch.is_ascii_digit());
+        }
     }
 
     fn buffer_line(buffer: &Buffer, y: u16, width: u16) -> String {
