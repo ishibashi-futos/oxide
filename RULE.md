@@ -2,6 +2,8 @@
 
 ## PROCESS
 
+- Always ask for consent and provide `cargo add` commands before adding dependencies. Use latest versions unless justified.
+- When updating documentation, prioritize integrating changes into existing sections to prevent fragmentation and improve maintainability.
 - Always follow the TDD cycle: Red → Green → Refactor.
 - Write the simplest failing test first.
 - Implement the minimum code needed to make tests pass.
