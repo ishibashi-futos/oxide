@@ -1,14 +1,19 @@
 # ABSOLUTE RULES
 
-## PROCESS
+## GENERAL RULES
 
 - Always ask for consent and provide `cargo add` commands before adding dependencies. Use latest versions unless justified.
+- Explicitly justify any changes to `features`, `edition`, or `toolchain`.
 - When updating documentation, prioritize integrating changes into existing sections to prevent fragmentation and improve maintainability.
-- Always follow the TDD cycle: Red → Green → Refactor.
-- Write the simplest failing test first.
-- Implement the minimum code needed to make tests pass.
-- Refactor only after tests are passing.
 - Execute tasks reliably and sequentially; do not parallelize them.
+
+## DEVELOPMENT WORKFLOW
+
+- 1. Red: Write the simplest failing test first.
+- 2. Green: Implement the minimum code needed to make tests pass.
+- 3. Refactor: Refactor only after tests are passing.
+- 4. After changes, run verification sequentially: `cargo fmt --all` → `cargo check --all-targets` → `cargo clippy --all-targets -- -D warnings` → `cargo test`.
+- 5. If errors occur, focus on the *first* error, propose a fix, and re-run verification.
 
 ## ASYNCHRONOUS BY DESIGN
 
@@ -55,7 +60,6 @@
 ## TIDY FIRST DISCIPLINE
 
 - Separate all changes into structural vs behavioral.
-- Never mix structural and behavioral changes in the same commit.
 - Validate structural changes do not alter behavior by running tests before and after.
 
 ## COMMIT DISCIPLINE
@@ -63,5 +67,5 @@
 - Only commit when all tests are passing.
 - Only commit when all compiler/linter warnings are resolved.
 - Only commit when the change is a single logical unit of work.
-- Commit messages must clearly state `[Structural]` or `[Behavioral]`.
+- Commit messages should start with `feat:` / `fix:` / `docs:` / `chore:` (Conventional Commits style).
 - Commits must be performed or approved by a human.
