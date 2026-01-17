@@ -378,7 +378,10 @@ mod tests {
         let opener = RecordingOpener::default();
         app.open_selected(&opener).unwrap();
 
-        assert_eq!(opener.opened_paths.borrow().as_slice(), &[file.clone()]);
+        assert_eq!(
+            opener.opened_paths.borrow().as_slice(),
+            std::slice::from_ref(&file)
+        );
     }
 
     #[test]

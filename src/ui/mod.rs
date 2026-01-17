@@ -86,38 +86,38 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             )
         })?;
 
-        if crossterm_event::poll(Duration::from_millis(200))? {
-            if let Event::Key(key) = crossterm_event::read()? {
-                if is_quit_event(key) {
-                    break;
-                }
-                if is_cursor_up_event(key) {
-                    app.move_cursor_up();
-                }
-                if is_cursor_down_event(key) {
-                    app.move_cursor_down();
-                }
-                if is_enter_event(key) {
-                    app.open_selected(opener)?;
-                }
-                if is_enter_dir_event(key) {
-                    app.enter_selected_dir()?;
-                }
-                if is_parent_event(key) {
-                    app.move_to_parent()?;
-                }
-                if is_toggle_hidden_event(key) {
-                    app.toggle_hidden()?;
-                }
-                if is_search_reset_event(key) {
-                    app.reset_search();
-                }
-                if is_search_backspace_event(key) {
-                    app.backspace_search_char();
-                }
-                if let Some(ch) = search_char(key) {
-                    app.append_search_char(ch);
-                }
+        if crossterm_event::poll(Duration::from_millis(200))?
+            && let Event::Key(key) = crossterm_event::read()?
+        {
+            if is_quit_event(key) {
+                break;
+            }
+            if is_cursor_up_event(key) {
+                app.move_cursor_up();
+            }
+            if is_cursor_down_event(key) {
+                app.move_cursor_down();
+            }
+            if is_enter_event(key) {
+                app.open_selected(opener)?;
+            }
+            if is_enter_dir_event(key) {
+                app.enter_selected_dir()?;
+            }
+            if is_parent_event(key) {
+                app.move_to_parent()?;
+            }
+            if is_toggle_hidden_event(key) {
+                app.toggle_hidden()?;
+            }
+            if is_search_reset_event(key) {
+                app.reset_search();
+            }
+            if is_search_backspace_event(key) {
+                app.backspace_search_char();
+            }
+            if let Some(ch) = search_char(key) {
+                app.append_search_char(ch);
             }
         }
     }

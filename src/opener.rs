@@ -12,11 +12,7 @@ impl EntryOpener for PlatformOpener {
         if status.success() {
             Ok(())
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("open command failed: {status}"),
-            )
-            .into())
+            Err(std::io::Error::other(format!("open command failed: {status}")).into())
         }
     }
 }
