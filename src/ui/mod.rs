@@ -31,12 +31,16 @@ use main_pane::render_entry_list;
 use bottom_bar::{format_metadata, render_bottom_bar};
 use metadata_worker::MetadataWorker;
 use top_bar::render_top_bar;
+use crate::core::GitWorker;
 
 pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
     let mut guard = TerminalGuard::new()?;
     let metadata_worker = MetadataWorker::new();
+    let git_worker = GitWorker::new();
     let mut last_metadata_path: Option<std::path::PathBuf> = None;
     let mut metadata_display: Option<String> = None;
+    let mut last_git_dir: Option<std::path::PathBuf> = None;
+    let mut git_display: Option<String> = None;
 
     loop {
         let current_path = app.selected_entry_path();
@@ -60,10 +64,22 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             }
             last_metadata_path = current_path;
         }
+        let current_dir = app.current_dir.clone();
+        while let Some(result) = git_worker.poll() {
+            if result.path != current_dir {
+                continue;
+            }
+            git_display = result.branch.map(|branch| format!("git: {branch}"));
+        }
+        if last_git_dir.as_ref() != Some(&current_dir) {
+            git_display = None;
+            git_worker.request(current_dir.clone());
+            last_git_dir = Some(current_dir);
+        }
 
         guard
             .terminal_mut()
-            .draw(|frame| draw(frame, &app, metadata_display.as_deref()))?;
+            .draw(|frame| draw(frame, &app, metadata_display.as_deref(), git_display.as_deref()))?;
 
         if crossterm_event::poll(Duration::from_millis(200))? {
             if let Event::Key(key) = crossterm_event::read()? {
@@ -104,7 +120,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
     Ok(())
 }
 
-fn draw(frame: &mut Frame<'_>, app: &App, metadata_display: Option<&str>) {
+fn draw(frame: &mut Frame<'_>, app: &App, metadata_display: Option<&str>, git_display: Option<&str>) {
     let area = frame.area();
     let (top, main, bottom) = split_main(area);
     render_top_bar(frame, top, app);
@@ -118,7 +134,7 @@ fn draw(frame: &mut Frame<'_>, app: &App, metadata_display: Option<&str>) {
         "current",
         app.search_text(),
     );
-    render_bottom_bar(frame, bottom, metadata_display);
+    render_bottom_bar(frame, bottom, metadata_display, git_display);
 }
 
 struct TerminalGuard {

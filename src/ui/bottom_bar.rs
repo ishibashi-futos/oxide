@@ -3,15 +3,29 @@ use ratatui::{layout::Rect, widgets::Paragraph, Frame};
 
 use crate::core::EntryMetadata;
 
-pub fn render_bottom_bar(frame: &mut Frame<'_>, area: Rect, metadata: Option<&str>) {
-    let bar = Paragraph::new(build_bottom_bar(metadata));
+pub fn render_bottom_bar(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    metadata: Option<&str>,
+    git: Option<&str>,
+) {
+    let bar = Paragraph::new(build_bottom_bar(metadata, git, area.width));
     frame.render_widget(bar, area);
 }
 
-fn build_bottom_bar(metadata: Option<&str>) -> String {
-    metadata
+fn build_bottom_bar(metadata: Option<&str>, git: Option<&str>, width: u16) -> String {
+    let left = metadata
         .map(|value| value.to_string())
-        .unwrap_or_else(placeholder_metadata)
+        .unwrap_or_else(placeholder_metadata);
+    let right = git.map(|value| value.to_string()).unwrap_or_else(placeholder_git);
+    let left_len = left.chars().count();
+    let right_len = right.chars().count();
+    let total_width = width as usize;
+    if total_width <= left_len + right_len + 1 {
+        return format!("{left} {right}");
+    }
+    let spaces = total_width - left_len - right_len;
+    format!("{left}{}{right}", " ".repeat(spaces))
 }
 
 pub fn format_metadata(metadata: &EntryMetadata) -> String {
@@ -24,6 +38,10 @@ pub fn format_metadata(metadata: &EntryMetadata) -> String {
 
 fn placeholder_metadata() -> String {
     "size: - | modified: -".to_string()
+}
+
+fn placeholder_git() -> String {
+    "git: -".to_string()
 }
 
 fn format_modified(modified: std::time::SystemTime) -> String {
@@ -100,7 +118,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 60, 1);
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, Some(&metadata_line)))
+            .draw(|frame| render_bottom_bar(frame, area, Some(&metadata_line), Some("git: main")))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -108,6 +126,7 @@ mod tests {
 
         assert!(line.contains("size: 5 B"));
         assert!(line.contains("modified:"));
+        assert!(line.contains("git: main"));
     }
 
     #[test]
@@ -116,13 +135,14 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 30, 1);
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None))
+            .draw(|frame| render_bottom_bar(frame, area, None, None))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
         let line = buffer_line(buffer, 0, 30);
 
         assert!(line.contains("size: - | modified: -"));
+        assert!(line.contains("git: -"));
     }
 
     fn assert_datetime_format(value: &str) {
