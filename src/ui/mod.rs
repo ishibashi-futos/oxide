@@ -28,7 +28,8 @@ use bottom_bar::{format_metadata, render_bottom_bar, render_slash_bar};
 use event::{
     is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event, is_parent_event,
     is_quit_event, is_search_backspace_event, is_search_reset_event, is_slash_activate_event,
-    is_slash_cancel_event, is_toggle_hidden_event, search_char, slash_input_char,
+    is_slash_cancel_event, is_slash_complete_event, is_slash_history_next_event,
+    is_slash_history_prev_event, is_toggle_hidden_event, search_char, slash_input_char,
 };
 use layout::{split_main, split_panes};
 use main_pane::render_entry_list;
@@ -145,6 +146,18 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
                     app.backspace_slash_char();
                     continue;
                 }
+                if is_slash_history_prev_event(key) {
+                    app.slash_history_prev();
+                    continue;
+                }
+                if is_slash_history_next_event(key) {
+                    app.slash_history_next();
+                    continue;
+                }
+                if is_slash_complete_event(key) {
+                    app.complete_slash_candidate();
+                    continue;
+                }
                 if let Some(ch) = slash_input_char(key) {
                     app.append_slash_char(ch);
                     continue;
@@ -234,7 +247,8 @@ fn draw(
         app.slash_feedback(),
     );
     if let Some(slash_area) = slash {
-        render_slash_bar(frame, slash_area, app.slash_input_text());
+        let candidates = app.slash_candidates();
+        render_slash_bar(frame, slash_area, app.slash_input_text(), &candidates);
     }
 }
 

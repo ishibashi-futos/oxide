@@ -21,6 +21,8 @@ pub struct App {
     slash_feedback: Option<SlashFeedback>,
     preview_visible: bool,
     preview_paused: bool,
+    slash_history: Vec<String>,
+    slash_history_index: Option<usize>,
 }
 
 impl App {
@@ -44,6 +46,8 @@ impl App {
             slash_feedback: None,
             preview_visible: false,
             preview_paused: false,
+            slash_history: Vec::new(),
+            slash_history_index: None,
         }
     }
 
@@ -152,11 +156,13 @@ impl App {
         self.slash_input_active = true;
         self.slash_input_buffer.clear();
         self.slash_input_buffer.push('/');
+        self.slash_history_index = None;
     }
 
     pub fn cancel_slash_input(&mut self) {
         self.slash_input_active = false;
         self.slash_input_buffer.clear();
+        self.slash_history_index = None;
     }
 
     pub fn append_slash_char(&mut self, ch: char) {
@@ -164,6 +170,7 @@ impl App {
             return;
         }
         self.slash_input_buffer.push(ch);
+        self.slash_history_index = None;
     }
 
     pub fn backspace_slash_char(&mut self) {
@@ -174,17 +181,21 @@ impl App {
             return;
         }
         self.slash_input_buffer.pop();
+        self.slash_history_index = None;
     }
 
     pub fn submit_slash_command(&mut self) -> Option<SlashCommand> {
         if !self.slash_input_active {
             return None;
         }
+        let input_snapshot = self.slash_input_buffer.clone();
         let command = parse_slash_command(&self.slash_input_buffer);
         self.slash_input_active = false;
         self.slash_input_buffer.clear();
+        self.slash_history_index = None;
         match command {
             Ok(command) => {
+                self.slash_history.push(input_snapshot);
                 self.slash_feedback = Some(self.handle_slash_command(&command));
                 Some(command)
             }
@@ -196,6 +207,63 @@ impl App {
                 None
             }
         }
+    }
+
+    pub fn slash_history_prev(&mut self) {
+        if self.slash_history.is_empty() {
+            return;
+        }
+        let next_index = match self.slash_history_index {
+            None => self.slash_history.len().saturating_sub(1),
+            Some(index) => index.saturating_sub(1),
+        };
+        self.slash_history_index = Some(next_index);
+        if let Some(entry) = self.slash_history.get(next_index) {
+            self.slash_input_buffer = entry.clone();
+        }
+    }
+
+    pub fn slash_history_next(&mut self) {
+        let Some(index) = self.slash_history_index else {
+            return;
+        };
+        let next_index = index.saturating_add(1);
+        if next_index >= self.slash_history.len() {
+            self.slash_history_index = None;
+            self.slash_input_buffer = "/".to_string();
+            return;
+        }
+        self.slash_history_index = Some(next_index);
+        if let Some(entry) = self.slash_history.get(next_index) {
+            self.slash_input_buffer = entry.clone();
+        }
+    }
+
+    pub fn slash_candidates(&self) -> Vec<String> {
+        let Some(prefix) = self.slash_command_prefix() else {
+            return Vec::new();
+        };
+        if prefix.is_empty() {
+            return Vec::new();
+        }
+        available_slash_commands()
+            .iter()
+            .filter_map(|command| {
+                if command.starts_with(prefix) {
+                    Some(format!("/{command}"))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn complete_slash_candidate(&mut self) {
+        let Some(candidate) = self.slash_candidates().into_iter().next() else {
+            return;
+        };
+        self.slash_input_buffer = candidate;
+        self.slash_history_index = None;
     }
 
     pub fn append_search_char(&mut self, ch: char) {
@@ -276,6 +344,10 @@ impl App {
     fn handle_slash_command(&mut self, command: &SlashCommand) -> SlashFeedback {
         match command.name.as_str() {
             "preview" => self.handle_preview_command(&command.args),
+            "paste" => SlashFeedback {
+                text: "paste: ready".to_string(),
+                status: FeedbackStatus::Success,
+            },
             _ => SlashFeedback {
                 text: format!("unknown command: {}", command.name),
                 status: FeedbackStatus::Error,
@@ -307,6 +379,12 @@ impl App {
             },
         }
     }
+
+    fn slash_command_prefix(&self) -> Option<&str> {
+        let mut parts = self.slash_input_buffer.split_whitespace();
+        let command = parts.next()?;
+        command.strip_prefix('/')
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -333,6 +411,10 @@ fn preview_feedback(enabled: bool) -> SlashFeedback {
         text: format!("preview: {}", if enabled { "on" } else { "off" }),
         status: FeedbackStatus::Success,
     }
+}
+
+fn available_slash_commands() -> &'static [&'static str] {
+    &["preview", "paste"]
 }
 
 #[cfg(test)]
@@ -435,6 +517,67 @@ mod slash_tests {
         assert!(!app.preview_visible());
         assert!(app.preview_paused);
         assert_eq!(feedback.text, "preview: off");
+    }
+
+    #[test]
+    fn slash_history_moves_through_entries() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+        app.submit_slash_command();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+        app.append_slash_char(' ');
+        app.append_slash_char('s');
+        app.append_slash_char('h');
+        app.append_slash_char('o');
+        app.append_slash_char('w');
+        app.submit_slash_command();
+
+        app.activate_slash_input();
+        app.slash_history_prev();
+        assert_eq!(app.slash_input_text(), "/preview show");
+        app.slash_history_prev();
+        assert_eq!(app.slash_input_text(), "/preview");
+        app.slash_history_next();
+        assert_eq!(app.slash_input_text(), "/preview show");
+    }
+
+    #[test]
+    fn slash_candidates_filter_by_prefix() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+
+        let candidates = app.slash_candidates();
+
+        assert_eq!(
+            candidates,
+            vec!["/preview".to_string(), "/paste".to_string()]
+        );
+    }
+
+    #[test]
+    fn slash_completion_uses_first_candidate() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+
+        app.complete_slash_candidate();
+
+        assert_eq!(app.slash_input_text(), "/preview");
     }
 }
 

@@ -65,6 +65,32 @@ pub fn is_slash_cancel_event(key: KeyEvent) -> bool {
     }
 }
 
+pub fn is_slash_history_prev_event(key: KeyEvent) -> bool {
+    if key.kind != KeyEventKind::Press {
+        return false;
+    }
+    match key.code {
+        KeyCode::Up => true,
+        KeyCode::Char('p') => key.modifiers.contains(KeyModifiers::CONTROL),
+        _ => false,
+    }
+}
+
+pub fn is_slash_history_next_event(key: KeyEvent) -> bool {
+    if key.kind != KeyEventKind::Press {
+        return false;
+    }
+    match key.code {
+        KeyCode::Down => true,
+        KeyCode::Char('n') => key.modifiers.contains(KeyModifiers::CONTROL),
+        _ => false,
+    }
+}
+
+pub fn is_slash_complete_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::Tab
+}
+
 pub fn slash_input_char(key: KeyEvent) -> Option<char> {
     if key.kind != KeyEventKind::Press {
         return None;
@@ -197,6 +223,36 @@ mod tests {
     fn slash_input_char_rejects_ctrl_char() {
         let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
         assert_eq!(slash_input_char(key), None);
+    }
+
+    #[test]
+    fn is_slash_history_prev_accepts_up() {
+        let key = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
+        assert!(is_slash_history_prev_event(key));
+    }
+
+    #[test]
+    fn is_slash_history_prev_accepts_ctrl_p() {
+        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert!(is_slash_history_prev_event(key));
+    }
+
+    #[test]
+    fn is_slash_history_next_accepts_down() {
+        let key = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        assert!(is_slash_history_next_event(key));
+    }
+
+    #[test]
+    fn is_slash_history_next_accepts_ctrl_n() {
+        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
+        assert!(is_slash_history_next_event(key));
+    }
+
+    #[test]
+    fn is_slash_complete_event_accepts_tab() {
+        let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+        assert!(is_slash_complete_event(key));
     }
 
     #[test]

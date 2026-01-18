@@ -20,8 +20,9 @@ pub fn render_bottom_bar(
     frame.render_widget(bar, area);
 }
 
-pub fn render_slash_bar(frame: &mut Frame<'_>, area: Rect, input: &str) {
-    let bar = Paragraph::new(build_slash_bar(input, area.width)).style(slash_bar_style());
+pub fn render_slash_bar(frame: &mut Frame<'_>, area: Rect, input: &str, candidates: &[String]) {
+    let bar =
+        Paragraph::new(build_slash_bar(input, candidates, area.width)).style(slash_bar_style());
     frame.render_widget(bar, area);
 }
 
@@ -48,14 +49,20 @@ fn build_bottom_bar(
     format!("{left}{}{right}", " ".repeat(spaces))
 }
 
-fn build_slash_bar(input: &str, width: u16) -> String {
+fn build_slash_bar(input: &str, candidates: &[String], width: u16) -> String {
     let width = width as usize;
     if width == 0 {
         return String::new();
     }
+    let mut full = input.to_string();
+    if !candidates.is_empty() {
+        full.push(' ');
+        full.push(' ');
+        full.push_str(&candidates.join(" "));
+    }
     let mut result = String::new();
     let mut used = 0usize;
-    for ch in input.chars() {
+    for ch in full.chars() {
         if used >= width {
             return result;
         }
@@ -198,13 +205,30 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 20, 1);
         terminal
-            .draw(|frame| render_slash_bar(frame, area, "/preview"))
+            .draw(|frame| render_slash_bar(frame, area, "/preview", &[]))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
         let line = buffer_line(buffer, 0, 20);
 
         assert!(line.contains("/preview"));
+    }
+
+    #[test]
+    fn render_slash_bar_shows_candidates() {
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 30, 1);
+        let candidates = vec!["/preview".to_string(), "/paste".to_string()];
+        terminal
+            .draw(|frame| render_slash_bar(frame, area, "/p", &candidates))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 30);
+
+        assert!(line.contains("/preview"));
+        assert!(line.contains("/paste"));
     }
 
     fn assert_datetime_format(value: &str) {
