@@ -22,11 +22,11 @@ use crate::{
 };
 
 use crate::core::GitWorker;
-use bottom_bar::{format_metadata, render_bottom_bar};
+use bottom_bar::{format_metadata, render_bottom_bar, render_slash_bar};
 use event::{
     is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event, is_parent_event,
-    is_quit_event, is_search_backspace_event, is_search_reset_event, is_toggle_hidden_event,
-    search_char,
+    is_quit_event, is_search_backspace_event, is_search_reset_event, is_slash_activate_event,
+    is_slash_cancel_event, is_toggle_hidden_event, search_char, slash_input_char,
 };
 use layout::{split_main, split_panes};
 use main_pane::render_entry_list;
@@ -89,8 +89,31 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
         if crossterm_event::poll(Duration::from_millis(200))?
             && let Event::Key(key) = crossterm_event::read()?
         {
+            if app.slash_input_active() {
+                if is_slash_cancel_event(key) {
+                    app.cancel_slash_input();
+                    continue;
+                }
+                if is_enter_event(key) {
+                    let _ = app.submit_slash_command();
+                    continue;
+                }
+                if is_search_backspace_event(key) {
+                    app.backspace_slash_char();
+                    continue;
+                }
+                if let Some(ch) = slash_input_char(key) {
+                    app.append_slash_char(ch);
+                    continue;
+                }
+                continue;
+            }
             if is_quit_event(key) {
                 break;
+            }
+            if is_slash_activate_event(key) {
+                app.activate_slash_input();
+                continue;
             }
             if is_cursor_up_event(key) {
                 app.move_cursor_up();
@@ -132,7 +155,7 @@ fn draw(
     git_display: Option<&str>,
 ) {
     let area = frame.area();
-    let (top, main, bottom) = split_main(area);
+    let (top, main, bottom, slash) = split_main(area, app.slash_input_active());
     render_top_bar(frame, top, app);
     let (left, right) = split_panes(main);
     render_entry_list(frame, left, &app.parent_entries, None, "parent", "");
@@ -144,7 +167,16 @@ fn draw(
         "current",
         app.search_text(),
     );
-    render_bottom_bar(frame, bottom, metadata_display, git_display);
+    render_bottom_bar(
+        frame,
+        bottom,
+        metadata_display,
+        git_display,
+        app.slash_feedback(),
+    );
+    if let Some(slash_area) = slash {
+        render_slash_bar(frame, slash_area, app.slash_input_text());
+    }
 }
 
 struct TerminalGuard {

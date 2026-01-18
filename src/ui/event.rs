@@ -50,6 +50,34 @@ pub fn is_toggle_hidden_event(key: KeyEvent) -> bool {
         && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
+pub fn is_slash_activate_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::Char('/') && key.modifiers.is_empty()
+}
+
+pub fn is_slash_cancel_event(key: KeyEvent) -> bool {
+    if key.kind != KeyEventKind::Press {
+        return false;
+    }
+    match key.code {
+        KeyCode::Esc => true,
+        KeyCode::Char('c') => key.modifiers.contains(KeyModifiers::CONTROL),
+        _ => false,
+    }
+}
+
+pub fn slash_input_char(key: KeyEvent) -> Option<char> {
+    if key.kind != KeyEventKind::Press {
+        return None;
+    }
+    let KeyCode::Char(ch) = key.code else {
+        return None;
+    };
+    if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
+        return Some(ch);
+    }
+    None
+}
+
 pub fn search_char(key: KeyEvent) -> Option<char> {
     if key.kind != KeyEventKind::Press {
         return None;
@@ -139,6 +167,36 @@ mod tests {
     fn is_toggle_hidden_event_rejects_plain_h() {
         let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
         assert!(!is_toggle_hidden_event(key));
+    }
+
+    #[test]
+    fn is_slash_activate_event_accepts_plain_slash() {
+        let key = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
+        assert!(is_slash_activate_event(key));
+    }
+
+    #[test]
+    fn is_slash_cancel_event_accepts_escape() {
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(is_slash_cancel_event(key));
+    }
+
+    #[test]
+    fn is_slash_cancel_event_accepts_ctrl_c() {
+        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(is_slash_cancel_event(key));
+    }
+
+    #[test]
+    fn slash_input_char_accepts_plain_char() {
+        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
+        assert_eq!(slash_input_char(key), Some('p'));
+    }
+
+    #[test]
+    fn slash_input_char_rejects_ctrl_char() {
+        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert_eq!(slash_input_char(key), None);
     }
 
     #[test]

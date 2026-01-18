@@ -1,6 +1,12 @@
 use chrono::{DateTime, Local};
-use ratatui::{Frame, layout::Rect, widgets::Paragraph};
+use ratatui::{
+    Frame,
+    layout::Rect,
+    style::{Color, Style},
+    widgets::Paragraph,
+};
 
+use crate::app::SlashFeedback;
 use crate::core::EntryMetadata;
 
 pub fn render_bottom_bar(
@@ -8,14 +14,26 @@ pub fn render_bottom_bar(
     area: Rect,
     metadata: Option<&str>,
     git: Option<&str>,
+    feedback: Option<&SlashFeedback>,
 ) {
-    let bar = Paragraph::new(build_bottom_bar(metadata, git, area.width));
+    let bar = Paragraph::new(build_bottom_bar(metadata, git, feedback, area.width));
     frame.render_widget(bar, area);
 }
 
-fn build_bottom_bar(metadata: Option<&str>, git: Option<&str>, width: u16) -> String {
-    let left = metadata
-        .map(|value| value.to_string())
+pub fn render_slash_bar(frame: &mut Frame<'_>, area: Rect, input: &str) {
+    let bar = Paragraph::new(build_slash_bar(input, area.width)).style(slash_bar_style());
+    frame.render_widget(bar, area);
+}
+
+fn build_bottom_bar(
+    metadata: Option<&str>,
+    git: Option<&str>,
+    feedback: Option<&SlashFeedback>,
+    width: u16,
+) -> String {
+    let left = feedback
+        .map(|value| value.text.clone())
+        .or_else(|| metadata.map(|value| value.to_string()))
         .unwrap_or_else(placeholder_metadata);
     let right = git
         .map(|value| value.to_string())
@@ -28,6 +46,31 @@ fn build_bottom_bar(metadata: Option<&str>, git: Option<&str>, width: u16) -> St
     }
     let spaces = total_width - left_len - right_len;
     format!("{left}{}{right}", " ".repeat(spaces))
+}
+
+fn build_slash_bar(input: &str, width: u16) -> String {
+    let width = width as usize;
+    if width == 0 {
+        return String::new();
+    }
+    let mut result = String::new();
+    let mut used = 0usize;
+    for ch in input.chars() {
+        if used >= width {
+            return result;
+        }
+        result.push(ch);
+        used += 1;
+    }
+    while used < width {
+        result.push(' ');
+        used += 1;
+    }
+    result
+}
+
+fn slash_bar_style() -> Style {
+    Style::default().bg(Color::DarkGray).fg(Color::White)
 }
 
 pub fn format_metadata(metadata: &EntryMetadata) -> String {
@@ -120,7 +163,9 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 60, 1);
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, Some(&metadata_line), Some("git: main")))
+            .draw(|frame| {
+                render_bottom_bar(frame, area, Some(&metadata_line), Some("git: main"), None)
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -137,7 +182,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 30, 1);
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None))
+            .draw(|frame| render_bottom_bar(frame, area, None, None, None))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -145,6 +190,21 @@ mod tests {
 
         assert!(line.contains("size: - | modified: -"));
         assert!(line.contains("git: -"));
+    }
+
+    #[test]
+    fn render_slash_bar_shows_input_text() {
+        let backend = TestBackend::new(20, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 20, 1);
+        terminal
+            .draw(|frame| render_slash_bar(frame, area, "/preview"))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 20);
+
+        assert!(line.contains("/preview"));
     }
 
     fn assert_datetime_format(value: &str) {

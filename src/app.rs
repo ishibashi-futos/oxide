@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::core::{Entry, list_entries};
+use crate::core::{Entry, SlashCommand, SlashCommandError, list_entries, parse_slash_command};
 use crate::error::AppResult;
 
 pub trait EntryOpener {
@@ -16,6 +16,9 @@ pub struct App {
     pub show_hidden: bool,
     search_buffer: String,
     search_origin: Option<usize>,
+    slash_input_active: bool,
+    slash_input_buffer: String,
+    slash_feedback: Option<SlashFeedback>,
 }
 
 impl App {
@@ -34,6 +37,9 @@ impl App {
             show_hidden,
             search_buffer: String::new(),
             search_origin: None,
+            slash_input_active: false,
+            slash_input_buffer: String::new(),
+            slash_feedback: None,
         }
     }
 
@@ -122,6 +128,71 @@ impl App {
         &self.search_buffer
     }
 
+    pub fn slash_input_active(&self) -> bool {
+        self.slash_input_active
+    }
+
+    pub fn slash_input_text(&self) -> &str {
+        &self.slash_input_buffer
+    }
+
+    pub fn slash_feedback(&self) -> Option<&SlashFeedback> {
+        self.slash_feedback.as_ref()
+    }
+
+    pub fn activate_slash_input(&mut self) {
+        self.slash_input_active = true;
+        self.slash_input_buffer.clear();
+        self.slash_input_buffer.push('/');
+    }
+
+    pub fn cancel_slash_input(&mut self) {
+        self.slash_input_active = false;
+        self.slash_input_buffer.clear();
+    }
+
+    pub fn append_slash_char(&mut self, ch: char) {
+        if !self.slash_input_active {
+            return;
+        }
+        self.slash_input_buffer.push(ch);
+    }
+
+    pub fn backspace_slash_char(&mut self) {
+        if !self.slash_input_active {
+            return;
+        }
+        if self.slash_input_buffer.len() <= 1 {
+            return;
+        }
+        self.slash_input_buffer.pop();
+    }
+
+    pub fn submit_slash_command(&mut self) -> Option<SlashCommand> {
+        if !self.slash_input_active {
+            return None;
+        }
+        let command = parse_slash_command(&self.slash_input_buffer);
+        self.slash_input_active = false;
+        self.slash_input_buffer.clear();
+        match command {
+            Ok(command) => {
+                self.slash_feedback = Some(SlashFeedback {
+                    text: format!("command: {}", command.name),
+                    status: FeedbackStatus::Success,
+                });
+                Some(command)
+            }
+            Err(error) => {
+                self.slash_feedback = Some(SlashFeedback {
+                    text: format!("slash error: {}", format_slash_error(error)),
+                    status: FeedbackStatus::Error,
+                });
+                None
+            }
+        }
+    }
+
     pub fn append_search_char(&mut self, ch: char) {
         if self.entries.is_empty() {
             return;
@@ -195,6 +266,80 @@ impl App {
             Some(index) => clamp_cursor(&self.entries, index),
             None => clamp_cursor(&self.entries, 0).or(self.cursor),
         };
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashFeedback {
+    pub text: String,
+    pub status: FeedbackStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedbackStatus {
+    Success,
+    Error,
+}
+
+fn format_slash_error(error: SlashCommandError) -> &'static str {
+    match error {
+        SlashCommandError::MissingSlash => "missing '/'",
+        SlashCommandError::MissingName => "missing command",
+    }
+}
+
+#[cfg(test)]
+mod slash_tests {
+    use super::*;
+
+    fn empty_app() -> App {
+        App::new(PathBuf::from("."), Vec::new(), Vec::new(), None, false)
+    }
+
+    #[test]
+    fn activate_slash_input_sets_prompt() {
+        let mut app = empty_app();
+
+        app.activate_slash_input();
+
+        assert!(app.slash_input_active());
+        assert_eq!(app.slash_input_text(), "/");
+    }
+
+    #[test]
+    fn cancel_slash_input_clears_buffer() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+
+        app.cancel_slash_input();
+
+        assert!(!app.slash_input_active());
+        assert_eq!(app.slash_input_text(), "");
+    }
+
+    #[test]
+    fn submit_slash_command_parses_and_deactivates() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+
+        let command = app.submit_slash_command().unwrap();
+
+        assert_eq!(command.name, "preview");
+        assert_eq!(command.args.len(), 0);
+        assert!(!app.slash_input_active());
+        assert_eq!(app.slash_input_text(), "");
+        assert_eq!(
+            app.slash_feedback().unwrap().status,
+            FeedbackStatus::Success
+        );
     }
 }
 
