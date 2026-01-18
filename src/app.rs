@@ -19,6 +19,8 @@ pub struct App {
     slash_input_active: bool,
     slash_input_buffer: String,
     slash_feedback: Option<SlashFeedback>,
+    preview_visible: bool,
+    preview_paused: bool,
 }
 
 impl App {
@@ -40,6 +42,8 @@ impl App {
             slash_input_active: false,
             slash_input_buffer: String::new(),
             slash_feedback: None,
+            preview_visible: false,
+            preview_paused: false,
         }
     }
 
@@ -140,6 +144,10 @@ impl App {
         self.slash_feedback.as_ref()
     }
 
+    pub fn preview_visible(&self) -> bool {
+        self.preview_visible
+    }
+
     pub fn activate_slash_input(&mut self) {
         self.slash_input_active = true;
         self.slash_input_buffer.clear();
@@ -177,10 +185,7 @@ impl App {
         self.slash_input_buffer.clear();
         match command {
             Ok(command) => {
-                self.slash_feedback = Some(SlashFeedback {
-                    text: format!("command: {}", command.name),
-                    status: FeedbackStatus::Success,
-                });
+                self.slash_feedback = Some(self.handle_slash_command(&command));
                 Some(command)
             }
             Err(error) => {
@@ -267,6 +272,41 @@ impl App {
             None => clamp_cursor(&self.entries, 0).or(self.cursor),
         };
     }
+
+    fn handle_slash_command(&mut self, command: &SlashCommand) -> SlashFeedback {
+        match command.name.as_str() {
+            "preview" => self.handle_preview_command(&command.args),
+            _ => SlashFeedback {
+                text: format!("unknown command: {}", command.name),
+                status: FeedbackStatus::Error,
+            },
+        }
+    }
+
+    fn handle_preview_command(&mut self, args: &[String]) -> SlashFeedback {
+        match args {
+            [] => {
+                let next = !self.preview_visible;
+                self.preview_visible = next;
+                self.preview_paused = !next;
+                preview_feedback(next)
+            }
+            [arg] if arg == "show" => {
+                self.preview_visible = true;
+                self.preview_paused = false;
+                preview_feedback(true)
+            }
+            [arg] if arg == "hide" => {
+                self.preview_visible = false;
+                self.preview_paused = true;
+                preview_feedback(false)
+            }
+            _ => SlashFeedback {
+                text: "preview: invalid args".to_string(),
+                status: FeedbackStatus::Error,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,6 +325,13 @@ fn format_slash_error(error: SlashCommandError) -> &'static str {
     match error {
         SlashCommandError::MissingSlash => "missing '/'",
         SlashCommandError::MissingName => "missing command",
+    }
+}
+
+fn preview_feedback(enabled: bool) -> SlashFeedback {
+    SlashFeedback {
+        text: format!("preview: {}", if enabled { "on" } else { "off" }),
+        status: FeedbackStatus::Success,
     }
 }
 
@@ -340,6 +387,54 @@ mod slash_tests {
             app.slash_feedback().unwrap().status,
             FeedbackStatus::Success
         );
+    }
+
+    #[test]
+    fn preview_toggle_turns_off_when_visible() {
+        let mut app = empty_app();
+        app.preview_visible = true;
+        app.preview_paused = false;
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "preview".to_string(),
+            args: Vec::new(),
+        });
+
+        assert!(!app.preview_visible());
+        assert!(app.preview_paused);
+        assert_eq!(feedback.text, "preview: off");
+    }
+
+    #[test]
+    fn preview_show_turns_on_and_resumes() {
+        let mut app = empty_app();
+        app.preview_visible = false;
+        app.preview_paused = true;
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "preview".to_string(),
+            args: vec!["show".to_string()],
+        });
+
+        assert!(app.preview_visible());
+        assert!(!app.preview_paused);
+        assert_eq!(feedback.text, "preview: on");
+    }
+
+    #[test]
+    fn preview_hide_turns_off_and_pauses() {
+        let mut app = empty_app();
+        app.preview_visible = true;
+        app.preview_paused = false;
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "preview".to_string(),
+            args: vec!["hide".to_string()],
+        });
+
+        assert!(!app.preview_visible());
+        assert!(app.preview_paused);
+        assert_eq!(feedback.text, "preview: off");
     }
 }
 

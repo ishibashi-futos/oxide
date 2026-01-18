@@ -3,6 +3,7 @@ mod event;
 mod layout;
 mod main_pane;
 mod metadata_worker;
+mod preview_pane;
 mod top_bar;
 
 use std::io::{self, Stdout};
@@ -31,6 +32,7 @@ use event::{
 use layout::{split_main, split_panes};
 use main_pane::render_entry_list;
 use metadata_worker::MetadataWorker;
+use preview_pane::render_preview_pane;
 use top_bar::render_top_bar;
 
 pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
@@ -157,7 +159,7 @@ fn draw(
     let area = frame.area();
     let (top, main, bottom, slash) = split_main(area, app.slash_input_active());
     render_top_bar(frame, top, app);
-    let (left, right) = split_panes(main);
+    let (left, right, preview) = split_panes(main, app.preview_visible());
     render_entry_list(frame, left, &app.parent_entries, None, "parent", "");
     render_entry_list(
         frame,
@@ -167,6 +169,9 @@ fn draw(
         "current",
         app.search_text(),
     );
+    if let Some(preview_area) = preview {
+        render_preview_pane(frame, preview_area, "preview: on");
+    }
     render_bottom_bar(
         frame,
         bottom,
