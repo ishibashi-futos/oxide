@@ -4,6 +4,7 @@ mod layout;
 mod main_pane;
 mod metadata_worker;
 mod preview_pane;
+mod preview_worker;
 mod top_bar;
 
 use std::io::{self, Stdout};
@@ -22,7 +23,7 @@ use crate::{
     error::AppResult,
 };
 
-use crate::core::GitWorker;
+use crate::core::{GitWorker, PreviewEvent, PreviewFailed, PreviewReady, PreviewRequest};
 use bottom_bar::{format_metadata, render_bottom_bar, render_slash_bar};
 use event::{
     is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event, is_parent_event,
@@ -32,17 +33,23 @@ use event::{
 use layout::{split_main, split_panes};
 use main_pane::render_entry_list;
 use metadata_worker::MetadataWorker;
-use preview_pane::render_preview_pane;
+use preview_pane::{PreviewPaneState, render_preview_pane};
+use preview_worker::PreviewWorker;
 use top_bar::render_top_bar;
 
 pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
     let mut guard = TerminalGuard::new()?;
     let metadata_worker = MetadataWorker::new();
     let git_worker = GitWorker::new();
+    let preview_worker = PreviewWorker::new();
     let mut last_metadata_path: Option<std::path::PathBuf> = None;
     let mut metadata_display: Option<String> = None;
     let mut last_git_dir: Option<std::path::PathBuf> = None;
     let mut git_display: Option<String> = None;
+    let mut last_preview_path: Option<std::path::PathBuf> = None;
+    let mut preview_state = PreviewState::Idle;
+    let mut preview_request_id: u64 = 0;
+    let mut active_preview_id: Option<u64> = None;
 
     loop {
         let current_path = app.selected_entry_path();
@@ -64,7 +71,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             if let Some(path) = current_path.clone() {
                 metadata_worker.request(path);
             }
-            last_metadata_path = current_path;
+            last_metadata_path = current_path.clone();
         }
         let current_dir = app.current_dir.clone();
         while let Some(result) = git_worker.poll() {
@@ -78,6 +85,39 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             git_worker.request(current_dir.clone());
             last_git_dir = Some(current_dir);
         }
+        while let Some(event) = preview_worker.poll() {
+            if Some(preview_event_id(&event)) != active_preview_id {
+                continue;
+            }
+            preview_state = match event {
+                PreviewEvent::Loading { .. } => PreviewState::Loading,
+                PreviewEvent::Ready(ready) => PreviewState::Ready(ready),
+                PreviewEvent::Failed(failed) => PreviewState::Failed(failed),
+            };
+        }
+        if app.preview_visible() {
+            if current_path != last_preview_path {
+                if let Some(path) = current_path.clone() {
+                    preview_request_id += 1;
+                    let id = preview_request_id;
+                    active_preview_id = Some(id);
+                    preview_state = PreviewState::Loading;
+                    preview_worker.request(PreviewRequest {
+                        id,
+                        path,
+                        max_bytes: 1024 * 1024,
+                    });
+                } else {
+                    preview_state = PreviewState::Idle;
+                    active_preview_id = None;
+                }
+                last_preview_path = current_path.clone();
+            }
+        } else {
+            last_preview_path = None;
+            preview_state = PreviewState::Idle;
+            active_preview_id = None;
+        }
 
         guard.terminal_mut().draw(|frame| {
             draw(
@@ -85,6 +125,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
                 &app,
                 metadata_display.as_deref(),
                 git_display.as_deref(),
+                &preview_state,
             )
         })?;
 
@@ -155,6 +196,7 @@ fn draw(
     app: &App,
     metadata_display: Option<&str>,
     git_display: Option<&str>,
+    preview_state: &PreviewState,
 ) {
     let area = frame.area();
     let (top, main, bottom, slash) = split_main(area, app.slash_input_active());
@@ -170,7 +212,19 @@ fn draw(
         app.search_text(),
     );
     if let Some(preview_area) = preview {
-        render_preview_pane(frame, preview_area, "preview: on");
+        let pane_state = match preview_state {
+            PreviewState::Idle => PreviewPaneState::Empty,
+            PreviewState::Loading => PreviewPaneState::Loading,
+            PreviewState::Ready(ready) => PreviewPaneState::Ready {
+                lines: &ready.lines,
+                reason: ready.reason.clone(),
+                truncated: ready.truncated,
+            },
+            PreviewState::Failed(failed) => PreviewPaneState::Failed {
+                reason: preview_error_text(failed),
+            },
+        };
+        render_preview_pane(frame, preview_area, pane_state);
     }
     render_bottom_bar(
         frame,
@@ -181,6 +235,32 @@ fn draw(
     );
     if let Some(slash_area) = slash {
         render_slash_bar(frame, slash_area, app.slash_input_text());
+    }
+}
+
+#[derive(Debug, Clone)]
+enum PreviewState {
+    Idle,
+    Loading,
+    Ready(PreviewReady),
+    Failed(PreviewFailed),
+}
+
+fn preview_event_id(event: &PreviewEvent) -> u64 {
+    match event {
+        PreviewEvent::Loading { id } => *id,
+        PreviewEvent::Ready(ready) => ready.id,
+        PreviewEvent::Failed(failed) => failed.id,
+    }
+}
+
+fn preview_error_text(failed: &PreviewFailed) -> String {
+    use crate::core::PreviewError;
+    match &failed.reason {
+        PreviewError::TooLarge => "preview: too large".to_string(),
+        PreviewError::BinaryFile => "preview: binary file".to_string(),
+        PreviewError::PermissionDenied => "preview: permission denied".to_string(),
+        PreviewError::IoError(message) => format!("preview: {message}"),
     }
 }
 
