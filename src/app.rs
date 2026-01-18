@@ -21,6 +21,7 @@ pub struct App {
     slash_feedback: Option<SlashFeedback>,
     preview_visible: bool,
     preview_paused: bool,
+    preview_ratio_percent: u16,
     slash_history: Vec<String>,
     slash_history_index: Option<usize>,
 }
@@ -46,6 +47,7 @@ impl App {
             slash_feedback: None,
             preview_visible: false,
             preview_paused: false,
+            preview_ratio_percent: 35,
             slash_history: Vec::new(),
             slash_history_index: None,
         }
@@ -150,6 +152,10 @@ impl App {
 
     pub fn preview_visible(&self) -> bool {
         self.preview_visible
+    }
+
+    pub fn preview_ratio_percent(&self) -> u16 {
+        self.preview_ratio_percent
     }
 
     pub fn activate_slash_input(&mut self) {
@@ -578,6 +584,24 @@ mod slash_tests {
         app.complete_slash_candidate();
 
         assert_eq!(app.slash_input_text(), "/preview");
+    }
+
+    #[test]
+    fn preview_ratio_is_preserved_between_toggle() {
+        let mut app = empty_app();
+        app.preview_ratio_percent = 32;
+        app.preview_visible = true;
+
+        let _ = app.handle_slash_command(&SlashCommand {
+            name: "preview".to_string(),
+            args: Vec::new(),
+        });
+        let _ = app.handle_slash_command(&SlashCommand {
+            name: "preview".to_string(),
+            args: Vec::new(),
+        });
+
+        assert_eq!(app.preview_ratio_percent(), 32);
     }
 }
 

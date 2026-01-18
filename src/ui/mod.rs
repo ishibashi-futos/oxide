@@ -214,7 +214,12 @@ fn draw(
     let area = frame.area();
     let (top, main, bottom, slash) = split_main(area, app.slash_input_active());
     render_top_bar(frame, top, app);
-    let (left, right, preview) = split_panes(main, app.preview_visible());
+    let preview_ratio = if app.preview_visible() {
+        Some(app.preview_ratio_percent())
+    } else {
+        None
+    };
+    let (left, right, preview) = split_panes(main, preview_ratio);
     render_entry_list(frame, left, &app.parent_entries, None, "parent", "");
     render_entry_list(
         frame,
