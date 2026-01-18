@@ -184,6 +184,7 @@ impl App {
             return;
         }
         if self.slash_input_buffer.len() <= 1 {
+            self.cancel_slash_input();
             return;
         }
         self.slash_input_buffer.pop();
@@ -252,15 +253,11 @@ impl App {
         if prefix.is_empty() {
             return Vec::new();
         }
-        available_slash_commands()
+        slash_command_specs()
             .iter()
-            .filter_map(|command| {
-                if command.starts_with(prefix) {
-                    Some(format!("/{command}"))
-                } else {
-                    None
-                }
-            })
+            .map(|spec| spec.name)
+            .filter(|command| command.starts_with(prefix))
+            .map(|command| format!("/{command}"))
             .collect()
     }
 
@@ -268,8 +265,35 @@ impl App {
         let Some(candidate) = self.slash_candidates().into_iter().next() else {
             return;
         };
-        self.slash_input_buffer = candidate;
+        if self.slash_input_buffer.contains(char::is_whitespace) {
+            return;
+        }
+        self.slash_input_buffer = format!("{candidate} ");
         self.slash_history_index = None;
+    }
+
+    pub fn slash_hint(&self) -> Option<String> {
+        if !self.slash_input_active {
+            return None;
+        }
+        let trimmed = self.slash_input_buffer.trim_end();
+        let Some(stripped) = trimmed.strip_prefix('/') else {
+            return None;
+        };
+        let mut parts = stripped.split_whitespace();
+        let name = parts.next()?;
+        if parts.next().is_some() {
+            return None;
+        }
+        let spec = slash_command_spec(name)?;
+        if spec.options.is_empty() {
+            return Some(spec.description.to_string());
+        }
+        Some(format!(
+            "{} | options: {}",
+            spec.description,
+            spec.options.join(", ")
+        ))
     }
 
     pub fn append_search_char(&mut self, ch: char) {
@@ -419,8 +443,31 @@ fn preview_feedback(enabled: bool) -> SlashFeedback {
     }
 }
 
-fn available_slash_commands() -> &'static [&'static str] {
-    &["preview", "paste"]
+struct SlashCommandSpec {
+    name: &'static str,
+    description: &'static str,
+    options: &'static [&'static str],
+}
+
+fn slash_command_specs() -> &'static [SlashCommandSpec] {
+    &[
+        SlashCommandSpec {
+            name: "preview",
+            description: "toggle preview",
+            options: &["show", "hide"],
+        },
+        SlashCommandSpec {
+            name: "paste",
+            description: "paste from clipboard",
+            options: &[],
+        },
+    ]
+}
+
+fn slash_command_spec(name: &str) -> Option<&'static SlashCommandSpec> {
+    slash_command_specs()
+        .iter()
+        .find(|spec| spec.name == name)
 }
 
 #[cfg(test)]
@@ -448,6 +495,17 @@ mod slash_tests {
         app.append_slash_char('p');
 
         app.cancel_slash_input();
+
+        assert!(!app.slash_input_active());
+        assert_eq!(app.slash_input_text(), "");
+    }
+
+    #[test]
+    fn backspace_slash_input_exits_when_empty() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+
+        app.backspace_slash_char();
 
         assert!(!app.slash_input_active());
         assert_eq!(app.slash_input_text(), "");
@@ -583,7 +641,62 @@ mod slash_tests {
 
         app.complete_slash_candidate();
 
-        assert_eq!(app.slash_input_text(), "/preview");
+        assert_eq!(app.slash_input_text(), "/preview ");
+    }
+
+    #[test]
+    fn slash_completion_skips_when_args_present() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+        app.append_slash_char(' ');
+        app.append_slash_char('h');
+
+        app.complete_slash_candidate();
+
+        assert_eq!(app.slash_input_text(), "/preview h");
+    }
+
+    #[test]
+    fn slash_hint_shows_description_and_options() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+
+        let hint = app.slash_hint().unwrap();
+
+        assert_eq!(hint, "toggle preview | options: show, hide");
+    }
+
+    #[test]
+    fn slash_hint_hides_when_args_present() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+        app.append_slash_char(' ');
+        app.append_slash_char('s');
+
+        let hint = app.slash_hint();
+
+        assert!(hint.is_none());
     }
 
     #[test]

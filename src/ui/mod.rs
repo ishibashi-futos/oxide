@@ -253,7 +253,14 @@ fn draw(
     );
     if let Some(slash_area) = slash {
         let candidates = app.slash_candidates();
-        render_slash_bar(frame, slash_area, app.slash_input_text(), &candidates);
+        let hint = app.slash_hint();
+        render_slash_bar(
+            frame,
+            slash_area,
+            app.slash_input_text(),
+            &candidates,
+            hint.as_deref(),
+        );
     }
 }
 
@@ -279,7 +286,14 @@ fn preview_error_text(failed: &PreviewFailed) -> String {
         PreviewError::TooLarge => "preview: too large".to_string(),
         PreviewError::BinaryFile => "preview: binary file".to_string(),
         PreviewError::PermissionDenied => "preview: permission denied".to_string(),
-        PreviewError::IoError(message) => format!("preview: {message}"),
+        PreviewError::IoError(message) => {
+            let lower = message.to_ascii_lowercase();
+            if lower.contains("is a directory") {
+                "no content: is a directory".to_string()
+            } else {
+                format!("preview: {message}")
+            }
+        }
     }
 }
 
@@ -322,4 +336,22 @@ fn restore_terminal() -> std::io::Result<()> {
     let mut stdout = io::stdout();
     execute!(stdout, LeaveAlternateScreen, Show)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{PreviewError, PreviewFailed};
+
+    #[test]
+    fn preview_error_text_shows_directory_reason() {
+        let failed = PreviewFailed {
+            id: 1,
+            reason: PreviewError::IoError("Is a directory".to_string()),
+        };
+
+        let text = preview_error_text(&failed);
+
+        assert_eq!(text, "no content: is a directory");
+    }
 }
