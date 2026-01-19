@@ -1,172 +1,25 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::core::{Entry, SlashCommand, SlashCommandError, list_entries, parse_slash_command};
 use crate::error::{AppError, AppResult};
+use crate::tabs::{TabSummary, TabsState};
 
 pub trait EntryOpener {
     fn open(&self, path: &Path) -> AppResult<()>;
 }
 
-#[derive(Debug, Clone)]
-struct TabsState {
-    tabs: Vec<PathBuf>,
-    active: usize,
+pub trait AppClock: std::fmt::Debug {
+    fn now(&self) -> Instant;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TabSummary {
-    number: usize,
-    path: PathBuf,
-    active: bool,
-}
+#[derive(Debug)]
+struct SystemClock;
 
-impl TabsState {
-    fn new(current_dir: PathBuf) -> Self {
-        Self {
-            tabs: vec![current_dir],
-            active: 0,
-        }
-    }
-
-    fn count(&self) -> usize {
-        self.tabs.len()
-    }
-
-    fn active_number(&self) -> usize {
-        self.active + 1
-    }
-
-    fn list_text(&self) -> String {
-        if self.tabs.is_empty() {
-            return "tabs:".to_string();
-        }
-        let entries = self
-            .tabs
-            .iter()
-            .enumerate()
-            .map(|(index, path)| {
-                let number = index + 1;
-                let marker = if index == self.active { "*" } else { "" };
-                format!("{number}{marker}:{}", path.display())
-            })
-            .collect::<Vec<String>>();
-        format!("tabs: {}", entries.join(" "))
-    }
-
-    fn store_active(&mut self, current_dir: &PathBuf) {
-        if let Some(slot) = self.tabs.get_mut(self.active) {
-            *slot = current_dir.clone();
-        }
-    }
-
-    fn push_new(&mut self, current_dir: &PathBuf) {
-        self.store_active(current_dir);
-        self.tabs.push(current_dir.clone());
-        self.active = self.tabs.len().saturating_sub(1);
-    }
-
-    fn next_index(&self) -> Option<usize> {
-        if self.tabs.len() <= 1 {
-            return None;
-        }
-        Some((self.active + 1) % self.tabs.len())
-    }
-
-    fn prev_index(&self) -> Option<usize> {
-        if self.tabs.len() <= 1 {
-            return None;
-        }
-        Some(if self.active == 0 {
-            self.tabs.len().saturating_sub(1)
-        } else {
-            self.active - 1
-        })
-    }
-
-    fn switch_to(&mut self, index: usize, current_dir: &PathBuf) -> Option<PathBuf> {
-        if index >= self.tabs.len() {
-            return None;
-        }
-        self.store_active(current_dir);
-        self.active = index;
-        Some(self.tabs[index].clone())
-    }
-
-    fn summaries(&self) -> Vec<TabSummary> {
-        self.tabs
-            .iter()
-            .enumerate()
-            .map(|(index, path)| TabSummary {
-                number: index + 1,
-                path: path.clone(),
-                active: index == self.active,
-            })
-            .collect()
-    }
-}
-
-#[cfg(test)]
-mod tabs_tests {
-    use super::*;
-
-    #[test]
-    fn push_new_adds_tab_and_sets_active() {
-        let dir_one = PathBuf::from("/one");
-        let dir_two = PathBuf::from("/two");
-        let mut tabs = TabsState::new(dir_one);
-
-        tabs.push_new(&dir_two);
-
-        assert_eq!(tabs.count(), 2);
-        assert_eq!(tabs.active_number(), 2);
-        assert_eq!(tabs.tabs[0], dir_two);
-        assert_eq!(tabs.tabs[1], dir_two);
-    }
-
-    #[test]
-    fn switch_to_stores_active_and_returns_target() {
-        let dir_one = PathBuf::from("/one");
-        let dir_two = PathBuf::from("/two");
-        let dir_three = PathBuf::from("/three");
-        let mut tabs = TabsState {
-            tabs: vec![dir_one, dir_two.clone()],
-            active: 0,
-        };
-
-        let next = tabs.switch_to(1, &dir_three);
-
-        assert_eq!(next, Some(dir_two));
-        assert_eq!(tabs.active_number(), 2);
-        assert_eq!(tabs.tabs[0], dir_three);
-    }
-
-    #[test]
-    fn summaries_marks_active_tab() {
-        let dir_one = PathBuf::from("/one");
-        let dir_two = PathBuf::from("/two");
-        let tabs = TabsState {
-            tabs: vec![dir_one.clone(), dir_two.clone()],
-            active: 1,
-        };
-
-        let summaries = tabs.summaries();
-
-        assert_eq!(
-            summaries,
-            vec![
-                TabSummary {
-                    number: 1,
-                    path: dir_one,
-                    active: false,
-                },
-                TabSummary {
-                    number: 2,
-                    path: dir_two,
-                    active: true,
-                },
-            ]
-        );
+impl AppClock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
     }
 }
 
@@ -177,6 +30,7 @@ pub struct App {
     pub parent_entries: Vec<Entry>,
     pub cursor: Option<usize>,
     pub show_hidden: bool,
+    clock: Arc<dyn AppClock>,
     tabs: TabsState,
     search_buffer: String,
     search_origin: Option<usize>,
@@ -200,6 +54,7 @@ impl App {
         cursor: Option<usize>,
         show_hidden: bool,
     ) -> Self {
+        let clock = Arc::new(SystemClock);
         let tabs = TabsState::new(current_dir.clone());
         Self {
             current_dir,
@@ -207,6 +62,7 @@ impl App {
             parent_entries,
             cursor,
             show_hidden,
+            clock,
             tabs,
             search_buffer: String::new(),
             search_origin: None,
@@ -257,7 +113,7 @@ impl App {
         };
         let target = self.current_dir.join(&selected.name);
         if selected.is_dir {
-            self.set_current_dir(target);
+            self.change_dir(target);
             self.refresh()?;
             return Ok(());
         }
@@ -272,7 +128,7 @@ impl App {
             return Ok(());
         }
         let target = self.current_dir.join(&selected.name);
-        self.set_current_dir(target);
+        self.change_dir(target);
         self.refresh()
     }
 
@@ -280,7 +136,7 @@ impl App {
         let Some(parent) = self.current_dir.parent() else {
             return Ok(());
         };
-        self.set_current_dir(parent.to_path_buf());
+        self.change_dir(parent.to_path_buf());
         self.refresh()
     }
 
@@ -316,7 +172,7 @@ impl App {
 
     pub fn slash_feedback(&self) -> Option<&SlashFeedback> {
         let feedback = self.slash_feedback.as_ref()?;
-        if feedback.is_expired() {
+        if feedback.is_expired_with(self.clock.as_ref()) {
             return None;
         }
         Some(feedback)
@@ -407,7 +263,7 @@ impl App {
                 Some(command)
             }
             Err(error) => {
-                self.slash_feedback = Some(timed_feedback(
+                self.slash_feedback = Some(self.timed_feedback(
                     format!("slash error: {}", format_slash_error(error)),
                     FeedbackStatus::Error,
                 ));
@@ -573,6 +429,10 @@ impl App {
 
     fn set_current_dir(&mut self, path: PathBuf) {
         self.current_dir = path;
+    }
+
+    fn change_dir(&mut self, path: PathBuf) {
+        self.set_current_dir(path);
         self.store_active_tab();
     }
 
@@ -584,7 +444,7 @@ impl App {
         let Some(next_dir) = self.tabs.switch_to(index, &self.current_dir) else {
             return Ok(());
         };
-        self.current_dir = next_dir;
+        self.set_current_dir(next_dir);
         self.refresh()?;
         Ok(())
     }
@@ -593,8 +453,8 @@ impl App {
         match command.name.as_str() {
             "preview" => self.handle_preview_command(&command.args),
             "tab" => self.handle_tab_command(&command.args),
-            "paste" => timed_feedback("paste: ready".to_string(), FeedbackStatus::Success),
-            _ => timed_feedback(
+            "paste" => self.timed_feedback("paste: ready".to_string(), FeedbackStatus::Success),
+            _ => self.timed_feedback(
                 format!("unknown command: {}", command.name),
                 FeedbackStatus::Error,
             ),
@@ -607,19 +467,19 @@ impl App {
                 let next = !self.preview_visible;
                 self.preview_visible = next;
                 self.preview_paused = !next;
-                preview_feedback(next)
+                self.preview_feedback(next)
             }
             [arg] if arg == "show" => {
                 self.preview_visible = true;
                 self.preview_paused = false;
-                preview_feedback(true)
+                self.preview_feedback(true)
             }
             [arg] if arg == "hide" => {
                 self.preview_visible = false;
                 self.preview_paused = true;
-                preview_feedback(false)
+                self.preview_feedback(false)
             }
-            _ => timed_feedback("preview: invalid args".to_string(), FeedbackStatus::Error),
+            _ => self.timed_feedback("preview: invalid args".to_string(), FeedbackStatus::Error),
         }
     }
 
@@ -628,31 +488,37 @@ impl App {
             [] => self.tab_list_feedback(),
             [arg] if arg == "new" => match self.new_tab() {
                 Ok(()) => self.tab_list_feedback(),
-                Err(error) => tab_error_feedback(error),
+                Err(error) => self.tab_error_feedback(error),
             },
             [arg] if arg == "next" => match self.next_tab() {
                 Ok(()) => self.tab_list_feedback(),
-                Err(error) => tab_error_feedback(error),
+                Err(error) => self.tab_error_feedback(error),
             },
             [arg] if arg == "prev" => match self.prev_tab() {
                 Ok(()) => self.tab_list_feedback(),
-                Err(error) => tab_error_feedback(error),
+                Err(error) => self.tab_error_feedback(error),
             },
             [arg] => match arg.parse::<usize>() {
                 Ok(number) if number >= 1 && number <= self.tab_count() => {
                     match self.switch_to_tab(number.saturating_sub(1)) {
                         Ok(()) => self.tab_list_feedback(),
-                        Err(error) => tab_error_feedback(error),
+                        Err(error) => self.tab_error_feedback(error),
                     }
                 }
-                _ => timed_feedback("tab: invalid args".to_string(), FeedbackStatus::Error),
+                _ => self.timed_feedback("tab: invalid args".to_string(), FeedbackStatus::Error),
             },
-            _ => timed_feedback("tab: invalid args".to_string(), FeedbackStatus::Error),
+            _ => self.timed_feedback("tab: invalid args".to_string(), FeedbackStatus::Error),
         }
     }
 
     fn tab_list_feedback(&self) -> SlashFeedback {
-        timed_feedback(self.tabs.list_text(), FeedbackStatus::Success)
+        let summaries = self.tabs.summaries();
+        SlashFeedback {
+            text: String::new(),
+            status: FeedbackStatus::Success,
+            tabs: Some(summaries),
+            expires_at: self.clock.now() + SLASH_FEEDBACK_TTL,
+        }
     }
 
     fn slash_command_prefix(&self) -> Option<&str> {
@@ -660,18 +526,34 @@ impl App {
         let command = parts.next()?;
         command.strip_prefix('/')
     }
+
+    fn timed_feedback(&self, text: String, status: FeedbackStatus) -> SlashFeedback {
+        timed_feedback_with(self.clock.as_ref(), text, status)
+    }
+
+    fn preview_feedback(&self, enabled: bool) -> SlashFeedback {
+        self.timed_feedback(
+            format!("preview: {}", if enabled { "on" } else { "off" }),
+            FeedbackStatus::Success,
+        )
+    }
+
+    fn tab_error_feedback(&self, error: AppError) -> SlashFeedback {
+        self.timed_feedback(format!("tab: {}", error), FeedbackStatus::Error)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlashFeedback {
     pub text: String,
     pub status: FeedbackStatus,
+    pub tabs: Option<Vec<TabSummary>>,
     pub(crate) expires_at: Instant,
 }
 
 impl SlashFeedback {
-    fn is_expired(&self) -> bool {
-        Instant::now() > self.expires_at
+    fn is_expired_with(&self, clock: &dyn AppClock) -> bool {
+        clock.now() > self.expires_at
     }
 }
 
@@ -688,23 +570,13 @@ fn format_slash_error(error: SlashCommandError) -> &'static str {
     }
 }
 
-fn timed_feedback(text: String, status: FeedbackStatus) -> SlashFeedback {
+fn timed_feedback_with(clock: &dyn AppClock, text: String, status: FeedbackStatus) -> SlashFeedback {
     SlashFeedback {
         text,
         status,
-        expires_at: Instant::now() + SLASH_FEEDBACK_TTL,
+        tabs: None,
+        expires_at: clock.now() + SLASH_FEEDBACK_TTL,
     }
-}
-
-fn preview_feedback(enabled: bool) -> SlashFeedback {
-    timed_feedback(
-        format!("preview: {}", if enabled { "on" } else { "off" }),
-        FeedbackStatus::Success,
-    )
-}
-
-fn tab_error_feedback(error: AppError) -> SlashFeedback {
-    timed_feedback(format!("tab: {}", error), FeedbackStatus::Error)
 }
 
 struct SlashCommandSpec {
@@ -742,6 +614,18 @@ fn slash_command_spec(name: &str) -> Option<&'static SlashCommandSpec> {
 #[cfg(test)]
 mod slash_tests {
     use super::*;
+    use crate::tabs::TabSummary;
+
+    #[derive(Debug)]
+    struct FixedClock {
+        now: Instant,
+    }
+
+    impl AppClock for FixedClock {
+        fn now(&self) -> Instant {
+            self.now
+        }
+    }
 
     fn empty_app() -> App {
         App::new(PathBuf::from("."), Vec::new(), Vec::new(), None, false)
@@ -756,7 +640,7 @@ mod slash_tests {
 
         let mut app = App::load(dir_one.clone()).unwrap();
         app.new_tab().unwrap();
-        app.set_current_dir(dir_two.clone());
+        app.change_dir(dir_two.clone());
 
         (temp_dir, app, dir_one, dir_two)
     }
@@ -988,10 +872,27 @@ mod slash_tests {
         app.slash_feedback = Some(SlashFeedback {
             text: "preview: on".to_string(),
             status: FeedbackStatus::Success,
+            tabs: None,
             expires_at: std::time::Instant::now() - std::time::Duration::from_secs(1),
         });
 
         assert!(app.slash_feedback().is_none());
+    }
+
+    #[test]
+    fn slash_feedback_uses_injected_clock() {
+        let now = Instant::now();
+        let feedback = SlashFeedback {
+            text: "preview: on".to_string(),
+            status: FeedbackStatus::Success,
+            tabs: None,
+            expires_at: now + std::time::Duration::from_secs(1),
+        };
+        let clock = FixedClock {
+            now: now + std::time::Duration::from_secs(2),
+        };
+
+        assert!(feedback.is_expired_with(&clock));
     }
 
     #[test]
@@ -1016,13 +917,22 @@ mod slash_tests {
             args: Vec::new(),
         });
 
-        let expected = format!(
-            "tabs: 1:{} 2*:{}",
-            dir_one.display(),
-            dir_two.display()
-        );
-        assert_eq!(feedback.text, expected);
         assert_eq!(feedback.status, FeedbackStatus::Success);
+        assert_eq!(
+            feedback.tabs,
+            Some(vec![
+                TabSummary {
+                    number: 1,
+                    path: dir_one,
+                    active: false,
+                },
+                TabSummary {
+                    number: 2,
+                    path: dir_two,
+                    active: true,
+                },
+            ])
+        );
     }
 
     #[test]
@@ -1449,7 +1359,7 @@ mod tests {
         let mut app = App::load(dir_one.clone()).unwrap();
         app.new_tab().unwrap();
 
-        app.set_current_dir(dir_two.clone());
+        app.change_dir(dir_two.clone());
 
         app.prev_tab().unwrap();
         assert_eq!(app.current_dir, dir_one);

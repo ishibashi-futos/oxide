@@ -8,6 +8,7 @@ use ratatui::{
 
 use crate::app::SlashFeedback;
 use crate::core::EntryMetadata;
+use crate::tabs::TabSummary;
 
 pub fn render_bottom_bar(
     frame: &mut Frame<'_>,
@@ -42,10 +43,15 @@ fn build_bottom_bar(
         .map(|value| value.to_string())
         .unwrap_or_else(placeholder_metadata);
     let left = if let Some(feedback) = feedback {
-        if feedback.text.is_empty() {
+        let feedback_text = if let Some(tabs) = feedback.tabs.as_deref() {
+            format_tabs(tabs)
+        } else {
+            feedback.text.clone()
+        };
+        if feedback_text.is_empty() {
             metadata_line
         } else {
-            format!("{} | {}", feedback.text, metadata_line)
+            format!("{} | {}", feedback_text, metadata_line)
         }
     } else {
         metadata_line
@@ -102,6 +108,20 @@ fn line_with_right(left: String, right: String, width: u16) -> String {
 
 fn slash_bar_style() -> Style {
     Style::default().bg(Color::DarkGray).fg(Color::White)
+}
+
+fn format_tabs(tabs: &[TabSummary]) -> String {
+    if tabs.is_empty() {
+        return "tabs:".to_string();
+    }
+    let entries = tabs
+        .iter()
+        .map(|summary| {
+            let marker = if summary.active { "*" } else { "" };
+            format!("{}{}:{}", summary.number, marker, summary.path.display())
+        })
+        .collect::<Vec<String>>();
+    format!("tabs: {}", entries.join(" "))
 }
 
 pub fn format_metadata(metadata: &EntryMetadata) -> String {
@@ -232,6 +252,7 @@ mod tests {
         let feedback = SlashFeedback {
             text: "preview: on".to_string(),
             status: crate::app::FeedbackStatus::Success,
+            tabs: None,
             expires_at: std::time::Instant::now() + std::time::Duration::from_secs(1),
         };
 
@@ -255,6 +276,39 @@ mod tests {
 
         assert!(line.contains("preview: on"));
         assert!(line.contains("size: 7 B"));
+    }
+
+    #[test]
+    fn render_bottom_bar_formats_tab_feedback() {
+        let feedback = SlashFeedback {
+            text: String::new(),
+            status: crate::app::FeedbackStatus::Success,
+            tabs: Some(vec![
+                TabSummary {
+                    number: 1,
+                    path: std::path::PathBuf::from("/one"),
+                    active: false,
+                },
+                TabSummary {
+                    number: 2,
+                    path: std::path::PathBuf::from("/two"),
+                    active: true,
+                },
+            ]),
+            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(1),
+        };
+
+        let backend = TestBackend::new(60, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 60, 1);
+        terminal
+            .draw(|frame| render_bottom_bar(frame, area, None, None, Some(&feedback)))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 60);
+
+        assert!(line.contains("tabs: 1:/one 2*:/two"));
     }
 
     #[test]
