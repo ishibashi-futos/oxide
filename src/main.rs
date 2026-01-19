@@ -2,6 +2,7 @@ mod app;
 mod core;
 mod error;
 mod opener;
+mod tabs;
 mod ui;
 
 use crate::{app::App, error::AppResult, opener::PlatformOpener};

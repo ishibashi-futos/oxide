@@ -22,9 +22,6 @@ pub fn is_enter_dir_event(key: KeyEvent) -> bool {
     if key.kind != KeyEventKind::Press {
         return false;
     }
-    if key.code == KeyCode::Char(']') {
-        return true;
-    }
     key.code == KeyCode::Right
         && (key.modifiers.is_empty()
             || key.modifiers.contains(KeyModifiers::ALT)
@@ -34,9 +31,6 @@ pub fn is_enter_dir_event(key: KeyEvent) -> bool {
 pub fn is_parent_event(key: KeyEvent) -> bool {
     if key.kind != KeyEventKind::Press {
         return false;
-    }
-    if key.code == KeyCode::Char('[') {
-        return true;
     }
     key.code == KeyCode::Left
         && (key.modifiers.is_empty()
@@ -48,6 +42,24 @@ pub fn is_toggle_hidden_event(key: KeyEvent) -> bool {
     key.kind == KeyEventKind::Press
         && key.code == KeyCode::Char('h')
         && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+pub fn is_new_tab_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press
+        && key.code == KeyCode::Char('t')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+pub fn is_next_tab_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press
+        && key.code == KeyCode::Char(']')
+        && key.modifiers.is_empty()
+}
+
+pub fn is_prev_tab_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press
+        && key.code == KeyCode::Char('[')
+        && key.modifiers.is_empty()
 }
 
 pub fn is_slash_activate_event(key: KeyEvent) -> bool {
@@ -156,7 +168,7 @@ mod tests {
     #[test]
     fn is_enter_dir_event_allows_right_bracket() {
         let key = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE);
-        assert!(is_enter_dir_event(key));
+        assert!(!is_enter_dir_event(key));
     }
 
     #[test]
@@ -180,7 +192,7 @@ mod tests {
     #[test]
     fn is_parent_event_allows_left_bracket() {
         let key = KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE);
-        assert!(is_parent_event(key));
+        assert!(!is_parent_event(key));
     }
 
     #[test]
@@ -193,6 +205,24 @@ mod tests {
     fn is_toggle_hidden_event_rejects_plain_h() {
         let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
         assert!(!is_toggle_hidden_event(key));
+    }
+
+    #[test]
+    fn is_new_tab_event_accepts_ctrl_t() {
+        let key = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL);
+        assert!(is_new_tab_event(key));
+    }
+
+    #[test]
+    fn is_next_tab_event_accepts_right_bracket() {
+        let key = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE);
+        assert!(is_next_tab_event(key));
+    }
+
+    #[test]
+    fn is_prev_tab_event_accepts_left_bracket() {
+        let key = KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE);
+        assert!(is_prev_tab_event(key));
     }
 
     #[test]

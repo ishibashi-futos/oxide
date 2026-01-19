@@ -26,8 +26,9 @@ use crate::{
 use crate::core::{GitWorker, PreviewEvent, PreviewFailed, PreviewReady, PreviewRequest};
 use bottom_bar::{format_metadata, render_bottom_bar, render_slash_bar};
 use event::{
-    is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event, is_parent_event,
-    is_quit_event, is_search_backspace_event, is_search_reset_event, is_slash_activate_event,
+    is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event, is_new_tab_event,
+    is_next_tab_event, is_parent_event, is_prev_tab_event, is_quit_event,
+    is_search_backspace_event, is_search_reset_event, is_slash_activate_event,
     is_slash_cancel_event, is_slash_complete_event, is_slash_history_next_event,
     is_slash_history_prev_event, is_toggle_hidden_event, search_char, slash_input_char,
 };
@@ -169,6 +170,18 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             }
             if is_slash_activate_event(key) {
                 app.activate_slash_input();
+                continue;
+            }
+            if is_new_tab_event(key) {
+                app.new_tab()?;
+                continue;
+            }
+            if is_next_tab_event(key) {
+                app.next_tab()?;
+                continue;
+            }
+            if is_prev_tab_event(key) {
+                app.prev_tab()?;
                 continue;
             }
             if is_cursor_up_event(key) {

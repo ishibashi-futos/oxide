@@ -1,10 +1,26 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::core::{Entry, SlashCommand, SlashCommandError, list_entries, parse_slash_command};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
+use crate::tabs::{TabSummary, TabsState};
 
 pub trait EntryOpener {
     fn open(&self, path: &Path) -> AppResult<()>;
+}
+
+pub trait AppClock: std::fmt::Debug {
+    fn now(&self) -> Instant;
+}
+
+#[derive(Debug)]
+struct SystemClock;
+
+impl AppClock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -14,6 +30,8 @@ pub struct App {
     pub parent_entries: Vec<Entry>,
     pub cursor: Option<usize>,
     pub show_hidden: bool,
+    clock: Arc<dyn AppClock>,
+    tabs: TabsState,
     search_buffer: String,
     search_origin: Option<usize>,
     slash_input_active: bool,
@@ -26,6 +44,8 @@ pub struct App {
     slash_history_index: Option<usize>,
 }
 
+const SLASH_FEEDBACK_TTL: Duration = Duration::from_secs(4);
+
 impl App {
     pub fn new(
         current_dir: PathBuf,
@@ -34,12 +54,16 @@ impl App {
         cursor: Option<usize>,
         show_hidden: bool,
     ) -> Self {
+        let clock = Arc::new(SystemClock);
+        let tabs = TabsState::new(current_dir.clone());
         Self {
             current_dir,
             entries,
             parent_entries,
             cursor,
             show_hidden,
+            clock,
+            tabs,
             search_buffer: String::new(),
             search_origin: None,
             slash_input_active: false,
@@ -89,7 +113,7 @@ impl App {
         };
         let target = self.current_dir.join(&selected.name);
         if selected.is_dir {
-            self.current_dir = target;
+            self.change_dir(target);
             self.refresh()?;
             return Ok(());
         }
@@ -104,7 +128,7 @@ impl App {
             return Ok(());
         }
         let target = self.current_dir.join(&selected.name);
-        self.current_dir = target;
+        self.change_dir(target);
         self.refresh()
     }
 
@@ -112,7 +136,7 @@ impl App {
         let Some(parent) = self.current_dir.parent() else {
             return Ok(());
         };
-        self.current_dir = parent.to_path_buf();
+        self.change_dir(parent.to_path_buf());
         self.refresh()
     }
 
@@ -147,7 +171,11 @@ impl App {
     }
 
     pub fn slash_feedback(&self) -> Option<&SlashFeedback> {
-        self.slash_feedback.as_ref()
+        let feedback = self.slash_feedback.as_ref()?;
+        if feedback.is_expired_with(self.clock.as_ref()) {
+            return None;
+        }
+        Some(feedback)
     }
 
     pub fn preview_visible(&self) -> bool {
@@ -156,6 +184,34 @@ impl App {
 
     pub fn preview_ratio_percent(&self) -> u16 {
         self.preview_ratio_percent
+    }
+
+    pub fn tab_count(&self) -> usize {
+        self.tabs.count()
+    }
+
+    pub fn active_tab_number(&self) -> usize {
+        self.tabs.active_number()
+    }
+
+    pub fn new_tab(&mut self) -> AppResult<()> {
+        self.tabs.push_new(&self.current_dir);
+        self.clear_search_state();
+        Ok(())
+    }
+
+    pub fn next_tab(&mut self) -> AppResult<()> {
+        let Some(next) = self.tabs.next_index() else {
+            return Ok(());
+        };
+        self.switch_to_tab(next)
+    }
+
+    pub fn prev_tab(&mut self) -> AppResult<()> {
+        let Some(prev) = self.tabs.prev_index() else {
+            return Ok(());
+        };
+        self.switch_to_tab(prev)
     }
 
     pub fn activate_slash_input(&mut self) {
@@ -207,10 +263,10 @@ impl App {
                 Some(command)
             }
             Err(error) => {
-                self.slash_feedback = Some(SlashFeedback {
-                    text: format!("slash error: {}", format_slash_error(error)),
-                    status: FeedbackStatus::Error,
-                });
+                self.slash_feedback = Some(self.timed_feedback(
+                    format!("slash error: {}", format_slash_error(error)),
+                    FeedbackStatus::Error,
+                ));
                 None
             }
         }
@@ -371,17 +427,37 @@ impl App {
         };
     }
 
+    fn set_current_dir(&mut self, path: PathBuf) {
+        self.current_dir = path;
+    }
+
+    fn change_dir(&mut self, path: PathBuf) {
+        self.set_current_dir(path);
+        self.store_active_tab();
+    }
+
+    fn store_active_tab(&mut self) {
+        self.tabs.store_active(&self.current_dir);
+    }
+
+    fn switch_to_tab(&mut self, index: usize) -> AppResult<()> {
+        let Some(next_dir) = self.tabs.switch_to(index, &self.current_dir) else {
+            return Ok(());
+        };
+        self.set_current_dir(next_dir);
+        self.refresh()?;
+        Ok(())
+    }
+
     fn handle_slash_command(&mut self, command: &SlashCommand) -> SlashFeedback {
         match command.name.as_str() {
             "preview" => self.handle_preview_command(&command.args),
-            "paste" => SlashFeedback {
-                text: "paste: ready".to_string(),
-                status: FeedbackStatus::Success,
-            },
-            _ => SlashFeedback {
-                text: format!("unknown command: {}", command.name),
-                status: FeedbackStatus::Error,
-            },
+            "tab" => self.handle_tab_command(&command.args),
+            "paste" => self.timed_feedback("paste: ready".to_string(), FeedbackStatus::Success),
+            _ => self.timed_feedback(
+                format!("unknown command: {}", command.name),
+                FeedbackStatus::Error,
+            ),
         }
     }
 
@@ -391,22 +467,57 @@ impl App {
                 let next = !self.preview_visible;
                 self.preview_visible = next;
                 self.preview_paused = !next;
-                preview_feedback(next)
+                self.preview_feedback(next)
             }
             [arg] if arg == "show" => {
                 self.preview_visible = true;
                 self.preview_paused = false;
-                preview_feedback(true)
+                self.preview_feedback(true)
             }
             [arg] if arg == "hide" => {
                 self.preview_visible = false;
                 self.preview_paused = true;
-                preview_feedback(false)
+                self.preview_feedback(false)
             }
-            _ => SlashFeedback {
-                text: "preview: invalid args".to_string(),
-                status: FeedbackStatus::Error,
+            _ => self.timed_feedback("preview: invalid args".to_string(), FeedbackStatus::Error),
+        }
+    }
+
+    fn handle_tab_command(&mut self, args: &[String]) -> SlashFeedback {
+        match args {
+            [] => self.tab_list_feedback(),
+            [arg] if arg == "new" => match self.new_tab() {
+                Ok(()) => self.tab_list_feedback(),
+                Err(error) => self.tab_error_feedback(error),
             },
+            [arg] if arg == "next" => match self.next_tab() {
+                Ok(()) => self.tab_list_feedback(),
+                Err(error) => self.tab_error_feedback(error),
+            },
+            [arg] if arg == "prev" => match self.prev_tab() {
+                Ok(()) => self.tab_list_feedback(),
+                Err(error) => self.tab_error_feedback(error),
+            },
+            [arg] => match arg.parse::<usize>() {
+                Ok(number) if number >= 1 && number <= self.tab_count() => {
+                    match self.switch_to_tab(number.saturating_sub(1)) {
+                        Ok(()) => self.tab_list_feedback(),
+                        Err(error) => self.tab_error_feedback(error),
+                    }
+                }
+                _ => self.timed_feedback("tab: invalid args".to_string(), FeedbackStatus::Error),
+            },
+            _ => self.timed_feedback("tab: invalid args".to_string(), FeedbackStatus::Error),
+        }
+    }
+
+    fn tab_list_feedback(&self) -> SlashFeedback {
+        let summaries = self.tabs.summaries();
+        SlashFeedback {
+            text: String::new(),
+            status: FeedbackStatus::Success,
+            tabs: Some(summaries),
+            expires_at: self.clock.now() + SLASH_FEEDBACK_TTL,
         }
     }
 
@@ -415,12 +526,35 @@ impl App {
         let command = parts.next()?;
         command.strip_prefix('/')
     }
+
+    fn timed_feedback(&self, text: String, status: FeedbackStatus) -> SlashFeedback {
+        timed_feedback_with(self.clock.as_ref(), text, status)
+    }
+
+    fn preview_feedback(&self, enabled: bool) -> SlashFeedback {
+        self.timed_feedback(
+            format!("preview: {}", if enabled { "on" } else { "off" }),
+            FeedbackStatus::Success,
+        )
+    }
+
+    fn tab_error_feedback(&self, error: AppError) -> SlashFeedback {
+        self.timed_feedback(format!("tab: {}", error), FeedbackStatus::Error)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlashFeedback {
     pub text: String,
     pub status: FeedbackStatus,
+    pub tabs: Option<Vec<TabSummary>>,
+    pub(crate) expires_at: Instant,
+}
+
+impl SlashFeedback {
+    fn is_expired_with(&self, clock: &dyn AppClock) -> bool {
+        clock.now() > self.expires_at
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,10 +570,12 @@ fn format_slash_error(error: SlashCommandError) -> &'static str {
     }
 }
 
-fn preview_feedback(enabled: bool) -> SlashFeedback {
+fn timed_feedback_with(clock: &dyn AppClock, text: String, status: FeedbackStatus) -> SlashFeedback {
     SlashFeedback {
-        text: format!("preview: {}", if enabled { "on" } else { "off" }),
-        status: FeedbackStatus::Success,
+        text,
+        status,
+        tabs: None,
+        expires_at: clock.now() + SLASH_FEEDBACK_TTL,
     }
 }
 
@@ -451,6 +587,11 @@ struct SlashCommandSpec {
 
 fn slash_command_specs() -> &'static [SlashCommandSpec] {
     &[
+        SlashCommandSpec {
+            name: "tab",
+            description: "tabs",
+            options: &["new", "next", "prev", "<number>"],
+        },
         SlashCommandSpec {
             name: "preview",
             description: "toggle preview",
@@ -473,9 +614,35 @@ fn slash_command_spec(name: &str) -> Option<&'static SlashCommandSpec> {
 #[cfg(test)]
 mod slash_tests {
     use super::*;
+    use crate::tabs::TabSummary;
+
+    #[derive(Debug)]
+    struct FixedClock {
+        now: Instant,
+    }
+
+    impl AppClock for FixedClock {
+        fn now(&self) -> Instant {
+            self.now
+        }
+    }
 
     fn empty_app() -> App {
         App::new(PathBuf::from("."), Vec::new(), Vec::new(), None, false)
+    }
+
+    fn app_with_two_tabs() -> (tempfile::TempDir, App, PathBuf, PathBuf) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir_one = temp_dir.path().join("one");
+        let dir_two = temp_dir.path().join("two");
+        std::fs::create_dir(&dir_one).unwrap();
+        std::fs::create_dir(&dir_two).unwrap();
+
+        let mut app = App::load(dir_one.clone()).unwrap();
+        app.new_tab().unwrap();
+        app.change_dir(dir_two.clone());
+
+        (temp_dir, app, dir_one, dir_two)
     }
 
     #[test]
@@ -697,6 +864,89 @@ mod slash_tests {
         let hint = app.slash_hint();
 
         assert!(hint.is_none());
+    }
+
+    #[test]
+    fn slash_feedback_expires_after_ttl() {
+        let mut app = empty_app();
+        app.slash_feedback = Some(SlashFeedback {
+            text: "preview: on".to_string(),
+            status: FeedbackStatus::Success,
+            tabs: None,
+            expires_at: std::time::Instant::now() - std::time::Duration::from_secs(1),
+        });
+
+        assert!(app.slash_feedback().is_none());
+    }
+
+    #[test]
+    fn slash_feedback_uses_injected_clock() {
+        let now = Instant::now();
+        let feedback = SlashFeedback {
+            text: "preview: on".to_string(),
+            status: FeedbackStatus::Success,
+            tabs: None,
+            expires_at: now + std::time::Duration::from_secs(1),
+        };
+        let clock = FixedClock {
+            now: now + std::time::Duration::from_secs(2),
+        };
+
+        assert!(feedback.is_expired_with(&clock));
+    }
+
+    #[test]
+    fn slash_hint_shows_tab_options() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('t');
+        app.append_slash_char('a');
+        app.append_slash_char('b');
+
+        let hint = app.slash_hint().unwrap();
+
+        assert_eq!(hint, "tabs | options: new, next, prev, <number>");
+    }
+
+    #[test]
+    fn tab_command_lists_tabs() {
+        let (_temp_dir, mut app, dir_one, dir_two) = app_with_two_tabs();
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "tab".to_string(),
+            args: Vec::new(),
+        });
+
+        assert_eq!(feedback.status, FeedbackStatus::Success);
+        assert_eq!(
+            feedback.tabs,
+            Some(vec![
+                TabSummary {
+                    number: 1,
+                    path: dir_one,
+                    active: false,
+                },
+                TabSummary {
+                    number: 2,
+                    path: dir_two,
+                    active: true,
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn tab_command_switches_by_number() {
+        let (_temp_dir, mut app, dir_one, _dir_two) = app_with_two_tabs();
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "tab".to_string(),
+            args: vec!["1".to_string()],
+        });
+
+        assert_eq!(feedback.status, FeedbackStatus::Success);
+        assert_eq!(app.current_dir, dir_one);
+        assert_eq!(app.active_tab_number(), 1);
     }
 
     #[test]
@@ -1086,6 +1336,36 @@ mod tests {
 
         app.backspace_search_char();
         assert_eq!(app.cursor, Some(0));
+    }
+
+    #[test]
+    fn new_tab_adds_and_selects() {
+        let mut app = App::new(PathBuf::from("/tmp"), Vec::new(), Vec::new(), None, false);
+
+        app.new_tab().unwrap();
+
+        assert_eq!(app.tab_count(), 2);
+        assert_eq!(app.active_tab_number(), 2);
+    }
+
+    #[test]
+    fn switching_tabs_restores_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir_one = temp_dir.path().join("one");
+        let dir_two = temp_dir.path().join("two");
+        std::fs::create_dir(&dir_one).unwrap();
+        std::fs::create_dir(&dir_two).unwrap();
+
+        let mut app = App::load(dir_one.clone()).unwrap();
+        app.new_tab().unwrap();
+
+        app.change_dir(dir_two.clone());
+
+        app.prev_tab().unwrap();
+        assert_eq!(app.current_dir, dir_one);
+
+        app.next_tab().unwrap();
+        assert_eq!(app.current_dir, dir_two);
     }
 
     #[derive(Default)]

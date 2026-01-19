@@ -8,7 +8,13 @@ pub fn render_top_bar(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .selected_entry()
         .map(|entry| entry.name.as_str())
         .unwrap_or("");
-    let bar = Paragraph::new(format!("{} | {}", path, active));
+    let bar = Paragraph::new(format!(
+        "tab {}/{} | {} | {}",
+        app.active_tab_number(),
+        app.tab_count(),
+        path,
+        active
+    ));
     frame.render_widget(bar, area);
 }
 
@@ -44,6 +50,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let line = buffer_line(buffer, 0, 30);
 
+        assert!(line.contains("tab 1/1"));
         assert!(line.contains("/tmp"));
         assert!(line.contains("a.txt"));
     }
