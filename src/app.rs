@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::core::{Entry, list_entries};
+use crate::core::{Entry, SlashCommand, SlashCommandError, list_entries, parse_slash_command};
 use crate::error::AppResult;
 
 pub trait EntryOpener {
@@ -16,6 +16,14 @@ pub struct App {
     pub show_hidden: bool,
     search_buffer: String,
     search_origin: Option<usize>,
+    slash_input_active: bool,
+    slash_input_buffer: String,
+    slash_feedback: Option<SlashFeedback>,
+    preview_visible: bool,
+    preview_paused: bool,
+    preview_ratio_percent: u16,
+    slash_history: Vec<String>,
+    slash_history_index: Option<usize>,
 }
 
 impl App {
@@ -34,6 +42,14 @@ impl App {
             show_hidden,
             search_buffer: String::new(),
             search_origin: None,
+            slash_input_active: false,
+            slash_input_buffer: String::new(),
+            slash_feedback: None,
+            preview_visible: false,
+            preview_paused: false,
+            preview_ratio_percent: 35,
+            slash_history: Vec::new(),
+            slash_history_index: None,
         }
     }
 
@@ -122,6 +138,164 @@ impl App {
         &self.search_buffer
     }
 
+    pub fn slash_input_active(&self) -> bool {
+        self.slash_input_active
+    }
+
+    pub fn slash_input_text(&self) -> &str {
+        &self.slash_input_buffer
+    }
+
+    pub fn slash_feedback(&self) -> Option<&SlashFeedback> {
+        self.slash_feedback.as_ref()
+    }
+
+    pub fn preview_visible(&self) -> bool {
+        self.preview_visible
+    }
+
+    pub fn preview_ratio_percent(&self) -> u16 {
+        self.preview_ratio_percent
+    }
+
+    pub fn activate_slash_input(&mut self) {
+        self.slash_input_active = true;
+        self.slash_input_buffer.clear();
+        self.slash_input_buffer.push('/');
+        self.slash_history_index = None;
+    }
+
+    pub fn cancel_slash_input(&mut self) {
+        self.slash_input_active = false;
+        self.slash_input_buffer.clear();
+        self.slash_history_index = None;
+    }
+
+    pub fn append_slash_char(&mut self, ch: char) {
+        if !self.slash_input_active {
+            return;
+        }
+        self.slash_input_buffer.push(ch);
+        self.slash_history_index = None;
+    }
+
+    pub fn backspace_slash_char(&mut self) {
+        if !self.slash_input_active {
+            return;
+        }
+        if self.slash_input_buffer.len() <= 1 {
+            self.cancel_slash_input();
+            return;
+        }
+        self.slash_input_buffer.pop();
+        self.slash_history_index = None;
+    }
+
+    pub fn submit_slash_command(&mut self) -> Option<SlashCommand> {
+        if !self.slash_input_active {
+            return None;
+        }
+        let input_snapshot = self.slash_input_buffer.clone();
+        let command = parse_slash_command(&self.slash_input_buffer);
+        self.slash_input_active = false;
+        self.slash_input_buffer.clear();
+        self.slash_history_index = None;
+        match command {
+            Ok(command) => {
+                self.slash_history.push(input_snapshot);
+                self.slash_feedback = Some(self.handle_slash_command(&command));
+                Some(command)
+            }
+            Err(error) => {
+                self.slash_feedback = Some(SlashFeedback {
+                    text: format!("slash error: {}", format_slash_error(error)),
+                    status: FeedbackStatus::Error,
+                });
+                None
+            }
+        }
+    }
+
+    pub fn slash_history_prev(&mut self) {
+        if self.slash_history.is_empty() {
+            return;
+        }
+        let next_index = match self.slash_history_index {
+            None => self.slash_history.len().saturating_sub(1),
+            Some(index) => index.saturating_sub(1),
+        };
+        self.slash_history_index = Some(next_index);
+        if let Some(entry) = self.slash_history.get(next_index) {
+            self.slash_input_buffer = entry.clone();
+        }
+    }
+
+    pub fn slash_history_next(&mut self) {
+        let Some(index) = self.slash_history_index else {
+            return;
+        };
+        let next_index = index.saturating_add(1);
+        if next_index >= self.slash_history.len() {
+            self.slash_history_index = None;
+            self.slash_input_buffer = "/".to_string();
+            return;
+        }
+        self.slash_history_index = Some(next_index);
+        if let Some(entry) = self.slash_history.get(next_index) {
+            self.slash_input_buffer = entry.clone();
+        }
+    }
+
+    pub fn slash_candidates(&self) -> Vec<String> {
+        let Some(prefix) = self.slash_command_prefix() else {
+            return Vec::new();
+        };
+        if prefix.is_empty() {
+            return Vec::new();
+        }
+        slash_command_specs()
+            .iter()
+            .map(|spec| spec.name)
+            .filter(|command| command.starts_with(prefix))
+            .map(|command| format!("/{command}"))
+            .collect()
+    }
+
+    pub fn complete_slash_candidate(&mut self) {
+        let Some(candidate) = self.slash_candidates().into_iter().next() else {
+            return;
+        };
+        if self.slash_input_buffer.contains(char::is_whitespace) {
+            return;
+        }
+        self.slash_input_buffer = format!("{candidate} ");
+        self.slash_history_index = None;
+    }
+
+    pub fn slash_hint(&self) -> Option<String> {
+        if !self.slash_input_active {
+            return None;
+        }
+        let trimmed = self.slash_input_buffer.trim_end();
+        let Some(stripped) = trimmed.strip_prefix('/') else {
+            return None;
+        };
+        let mut parts = stripped.split_whitespace();
+        let name = parts.next()?;
+        if parts.next().is_some() {
+            return None;
+        }
+        let spec = slash_command_spec(name)?;
+        if spec.options.is_empty() {
+            return Some(spec.description.to_string());
+        }
+        Some(format!(
+            "{} | options: {}",
+            spec.description,
+            spec.options.join(", ")
+        ))
+    }
+
     pub fn append_search_char(&mut self, ch: char) {
         if self.entries.is_empty() {
             return;
@@ -195,6 +369,352 @@ impl App {
             Some(index) => clamp_cursor(&self.entries, index),
             None => clamp_cursor(&self.entries, 0).or(self.cursor),
         };
+    }
+
+    fn handle_slash_command(&mut self, command: &SlashCommand) -> SlashFeedback {
+        match command.name.as_str() {
+            "preview" => self.handle_preview_command(&command.args),
+            "paste" => SlashFeedback {
+                text: "paste: ready".to_string(),
+                status: FeedbackStatus::Success,
+            },
+            _ => SlashFeedback {
+                text: format!("unknown command: {}", command.name),
+                status: FeedbackStatus::Error,
+            },
+        }
+    }
+
+    fn handle_preview_command(&mut self, args: &[String]) -> SlashFeedback {
+        match args {
+            [] => {
+                let next = !self.preview_visible;
+                self.preview_visible = next;
+                self.preview_paused = !next;
+                preview_feedback(next)
+            }
+            [arg] if arg == "show" => {
+                self.preview_visible = true;
+                self.preview_paused = false;
+                preview_feedback(true)
+            }
+            [arg] if arg == "hide" => {
+                self.preview_visible = false;
+                self.preview_paused = true;
+                preview_feedback(false)
+            }
+            _ => SlashFeedback {
+                text: "preview: invalid args".to_string(),
+                status: FeedbackStatus::Error,
+            },
+        }
+    }
+
+    fn slash_command_prefix(&self) -> Option<&str> {
+        let mut parts = self.slash_input_buffer.split_whitespace();
+        let command = parts.next()?;
+        command.strip_prefix('/')
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashFeedback {
+    pub text: String,
+    pub status: FeedbackStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedbackStatus {
+    Success,
+    Error,
+}
+
+fn format_slash_error(error: SlashCommandError) -> &'static str {
+    match error {
+        SlashCommandError::MissingSlash => "missing '/'",
+        SlashCommandError::MissingName => "missing command",
+    }
+}
+
+fn preview_feedback(enabled: bool) -> SlashFeedback {
+    SlashFeedback {
+        text: format!("preview: {}", if enabled { "on" } else { "off" }),
+        status: FeedbackStatus::Success,
+    }
+}
+
+struct SlashCommandSpec {
+    name: &'static str,
+    description: &'static str,
+    options: &'static [&'static str],
+}
+
+fn slash_command_specs() -> &'static [SlashCommandSpec] {
+    &[
+        SlashCommandSpec {
+            name: "preview",
+            description: "toggle preview",
+            options: &["show", "hide"],
+        },
+        SlashCommandSpec {
+            name: "paste",
+            description: "paste from clipboard",
+            options: &[],
+        },
+    ]
+}
+
+fn slash_command_spec(name: &str) -> Option<&'static SlashCommandSpec> {
+    slash_command_specs()
+        .iter()
+        .find(|spec| spec.name == name)
+}
+
+#[cfg(test)]
+mod slash_tests {
+    use super::*;
+
+    fn empty_app() -> App {
+        App::new(PathBuf::from("."), Vec::new(), Vec::new(), None, false)
+    }
+
+    #[test]
+    fn activate_slash_input_sets_prompt() {
+        let mut app = empty_app();
+
+        app.activate_slash_input();
+
+        assert!(app.slash_input_active());
+        assert_eq!(app.slash_input_text(), "/");
+    }
+
+    #[test]
+    fn cancel_slash_input_clears_buffer() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+
+        app.cancel_slash_input();
+
+        assert!(!app.slash_input_active());
+        assert_eq!(app.slash_input_text(), "");
+    }
+
+    #[test]
+    fn backspace_slash_input_exits_when_empty() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+
+        app.backspace_slash_char();
+
+        assert!(!app.slash_input_active());
+        assert_eq!(app.slash_input_text(), "");
+    }
+
+    #[test]
+    fn submit_slash_command_parses_and_deactivates() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+
+        let command = app.submit_slash_command().unwrap();
+
+        assert_eq!(command.name, "preview");
+        assert_eq!(command.args.len(), 0);
+        assert!(!app.slash_input_active());
+        assert_eq!(app.slash_input_text(), "");
+        assert_eq!(
+            app.slash_feedback().unwrap().status,
+            FeedbackStatus::Success
+        );
+    }
+
+    #[test]
+    fn preview_toggle_turns_off_when_visible() {
+        let mut app = empty_app();
+        app.preview_visible = true;
+        app.preview_paused = false;
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "preview".to_string(),
+            args: Vec::new(),
+        });
+
+        assert!(!app.preview_visible());
+        assert!(app.preview_paused);
+        assert_eq!(feedback.text, "preview: off");
+    }
+
+    #[test]
+    fn preview_show_turns_on_and_resumes() {
+        let mut app = empty_app();
+        app.preview_visible = false;
+        app.preview_paused = true;
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "preview".to_string(),
+            args: vec!["show".to_string()],
+        });
+
+        assert!(app.preview_visible());
+        assert!(!app.preview_paused);
+        assert_eq!(feedback.text, "preview: on");
+    }
+
+    #[test]
+    fn preview_hide_turns_off_and_pauses() {
+        let mut app = empty_app();
+        app.preview_visible = true;
+        app.preview_paused = false;
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "preview".to_string(),
+            args: vec!["hide".to_string()],
+        });
+
+        assert!(!app.preview_visible());
+        assert!(app.preview_paused);
+        assert_eq!(feedback.text, "preview: off");
+    }
+
+    #[test]
+    fn slash_history_moves_through_entries() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+        app.submit_slash_command();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+        app.append_slash_char(' ');
+        app.append_slash_char('s');
+        app.append_slash_char('h');
+        app.append_slash_char('o');
+        app.append_slash_char('w');
+        app.submit_slash_command();
+
+        app.activate_slash_input();
+        app.slash_history_prev();
+        assert_eq!(app.slash_input_text(), "/preview show");
+        app.slash_history_prev();
+        assert_eq!(app.slash_input_text(), "/preview");
+        app.slash_history_next();
+        assert_eq!(app.slash_input_text(), "/preview show");
+    }
+
+    #[test]
+    fn slash_candidates_filter_by_prefix() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+
+        let candidates = app.slash_candidates();
+
+        assert_eq!(
+            candidates,
+            vec!["/preview".to_string(), "/paste".to_string()]
+        );
+    }
+
+    #[test]
+    fn slash_completion_uses_first_candidate() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+
+        app.complete_slash_candidate();
+
+        assert_eq!(app.slash_input_text(), "/preview ");
+    }
+
+    #[test]
+    fn slash_completion_skips_when_args_present() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+        app.append_slash_char(' ');
+        app.append_slash_char('h');
+
+        app.complete_slash_candidate();
+
+        assert_eq!(app.slash_input_text(), "/preview h");
+    }
+
+    #[test]
+    fn slash_hint_shows_description_and_options() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+
+        let hint = app.slash_hint().unwrap();
+
+        assert_eq!(hint, "toggle preview | options: show, hide");
+    }
+
+    #[test]
+    fn slash_hint_hides_when_args_present() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('p');
+        app.append_slash_char('r');
+        app.append_slash_char('e');
+        app.append_slash_char('v');
+        app.append_slash_char('i');
+        app.append_slash_char('e');
+        app.append_slash_char('w');
+        app.append_slash_char(' ');
+        app.append_slash_char('s');
+
+        let hint = app.slash_hint();
+
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn preview_ratio_is_preserved_between_toggle() {
+        let mut app = empty_app();
+        app.preview_ratio_percent = 32;
+        app.preview_visible = true;
+
+        let _ = app.handle_slash_command(&SlashCommand {
+            name: "preview".to_string(),
+            args: Vec::new(),
+        });
+        let _ = app.handle_slash_command(&SlashCommand {
+            name: "preview".to_string(),
+            args: Vec::new(),
+        });
+
+        assert_eq!(app.preview_ratio_percent(), 32);
     }
 }
 

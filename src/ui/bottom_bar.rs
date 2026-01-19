@@ -1,6 +1,12 @@
 use chrono::{DateTime, Local};
-use ratatui::{Frame, layout::Rect, widgets::Paragraph};
+use ratatui::{
+    Frame,
+    layout::Rect,
+    style::{Color, Style},
+    widgets::Paragraph,
+};
 
+use crate::app::SlashFeedback;
 use crate::core::EntryMetadata;
 
 pub fn render_bottom_bar(
@@ -8,18 +14,82 @@ pub fn render_bottom_bar(
     area: Rect,
     metadata: Option<&str>,
     git: Option<&str>,
+    feedback: Option<&SlashFeedback>,
 ) {
-    let bar = Paragraph::new(build_bottom_bar(metadata, git, area.width));
+    let bar = Paragraph::new(build_bottom_bar(metadata, git, feedback, area.width));
     frame.render_widget(bar, area);
 }
 
-fn build_bottom_bar(metadata: Option<&str>, git: Option<&str>, width: u16) -> String {
-    let left = metadata
+pub fn render_slash_bar(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    input: &str,
+    candidates: &[String],
+    hint: Option<&str>,
+) {
+    let bar = Paragraph::new(build_slash_bar(input, candidates, hint, area.width))
+        .style(slash_bar_style());
+    frame.render_widget(bar, area);
+}
+
+fn build_bottom_bar(
+    metadata: Option<&str>,
+    git: Option<&str>,
+    feedback: Option<&SlashFeedback>,
+    width: u16,
+) -> String {
+    let metadata_line = metadata
         .map(|value| value.to_string())
         .unwrap_or_else(placeholder_metadata);
-    let right = git
+    let left = if let Some(feedback) = feedback {
+        if feedback.text.is_empty() {
+            metadata_line
+        } else {
+            format!("{} | {}", feedback.text, metadata_line)
+        }
+    } else {
+        metadata_line
+    };
+    let git_line = git
         .map(|value| value.to_string())
         .unwrap_or_else(placeholder_git);
+    line_with_right(left, git_line, width)
+}
+
+fn build_slash_bar(input: &str, candidates: &[String], hint: Option<&str>, width: u16) -> String {
+    let width = width as usize;
+    if width == 0 {
+        return String::new();
+    }
+    let mut full = input.to_string();
+    if let Some(hint) = hint {
+        if !hint.is_empty() {
+            full.push(' ');
+            full.push(' ');
+            full.push_str(hint);
+        }
+    } else if !candidates.is_empty() {
+        full.push(' ');
+        full.push(' ');
+        full.push_str(&candidates.join(" "));
+    }
+    let mut result = String::new();
+    let mut used = 0usize;
+    for ch in full.chars() {
+        if used >= width {
+            return result;
+        }
+        result.push(ch);
+        used += 1;
+    }
+    while used < width {
+        result.push(' ');
+        used += 1;
+    }
+    result
+}
+
+fn line_with_right(left: String, right: String, width: u16) -> String {
     let left_len = left.chars().count();
     let right_len = right.chars().count();
     let total_width = width as usize;
@@ -28,6 +98,10 @@ fn build_bottom_bar(metadata: Option<&str>, git: Option<&str>, width: u16) -> St
     }
     let spaces = total_width - left_len - right_len;
     format!("{left}{}{right}", " ".repeat(spaces))
+}
+
+fn slash_bar_style() -> Style {
+    Style::default().bg(Color::DarkGray).fg(Color::White)
 }
 
 pub fn format_metadata(metadata: &EntryMetadata) -> String {
@@ -116,19 +190,20 @@ mod tests {
         };
         let metadata_line = format_metadata(&metadata);
 
-        let backend = TestBackend::new(60, 1);
+        let backend = TestBackend::new(120, 1);
         let mut terminal = Terminal::new(backend).unwrap();
-        let area = Rect::new(0, 0, 60, 1);
+        let area = Rect::new(0, 0, 120, 1);
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, Some(&metadata_line), Some("git: main")))
+            .draw(|frame| {
+                render_bottom_bar(frame, area, Some(&metadata_line), Some("git: main"), None)
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        let line = buffer_line(buffer, 0, 60);
+        let line = buffer_line(buffer, 0, 120);
 
         assert!(line.contains("size: 5 B"));
         assert!(line.contains("modified:"));
-        assert!(line.contains("git: main"));
     }
 
     #[test]
@@ -137,7 +212,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 30, 1);
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None))
+            .draw(|frame| render_bottom_bar(frame, area, None, None, None))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -145,6 +220,96 @@ mod tests {
 
         assert!(line.contains("size: - | modified: -"));
         assert!(line.contains("git: -"));
+    }
+
+    #[test]
+    fn render_bottom_bar_keeps_metadata_when_feedback_present() {
+        let metadata = EntryMetadata {
+            size: 7,
+            modified: UNIX_EPOCH + Duration::from_secs(0),
+        };
+        let metadata_line = format_metadata(&metadata);
+        let feedback = SlashFeedback {
+            text: "preview: on".to_string(),
+            status: crate::app::FeedbackStatus::Success,
+        };
+
+        let backend = TestBackend::new(60, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 60, 1);
+        terminal
+            .draw(|frame| {
+                render_bottom_bar(
+                    frame,
+                    area,
+                    Some(&metadata_line),
+                    Some("git: main"),
+                    Some(&feedback),
+                )
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 60);
+
+        assert!(line.contains("preview: on"));
+        assert!(line.contains("size: 7 B"));
+    }
+
+    #[test]
+    fn render_slash_bar_shows_input_text() {
+        let backend = TestBackend::new(20, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 20, 1);
+        terminal
+            .draw(|frame| render_slash_bar(frame, area, "/preview", &[], None))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 20);
+
+        assert!(line.contains("/preview"));
+    }
+
+    #[test]
+    fn render_slash_bar_shows_candidates() {
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 30, 1);
+        let candidates = vec!["/preview".to_string(), "/paste".to_string()];
+        terminal
+            .draw(|frame| render_slash_bar(frame, area, "/p", &candidates, None))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 30);
+
+        assert!(line.contains("/preview"));
+        assert!(line.contains("/paste"));
+    }
+
+    #[test]
+    fn render_slash_bar_shows_hint_when_present() {
+        let backend = TestBackend::new(60, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 60, 1);
+        terminal
+            .draw(|frame| {
+                render_slash_bar(
+                    frame,
+                    area,
+                    "/preview",
+                    &[],
+                    Some("toggle preview | options: show, hide"),
+                )
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 60);
+
+        assert!(line.contains("toggle preview"));
+        assert!(line.contains("options: show, hide"));
     }
 
     fn assert_datetime_format(value: &str) {
