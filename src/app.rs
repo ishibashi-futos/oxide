@@ -14,6 +14,13 @@ struct TabsState {
     active: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TabSummary {
+    number: usize,
+    path: PathBuf,
+    active: bool,
+}
+
 impl TabsState {
     fn new(current_dir: PathBuf) -> Self {
         Self {
@@ -84,6 +91,82 @@ impl TabsState {
         self.store_active(current_dir);
         self.active = index;
         Some(self.tabs[index].clone())
+    }
+
+    fn summaries(&self) -> Vec<TabSummary> {
+        self.tabs
+            .iter()
+            .enumerate()
+            .map(|(index, path)| TabSummary {
+                number: index + 1,
+                path: path.clone(),
+                active: index == self.active,
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tabs_tests {
+    use super::*;
+
+    #[test]
+    fn push_new_adds_tab_and_sets_active() {
+        let dir_one = PathBuf::from("/one");
+        let dir_two = PathBuf::from("/two");
+        let mut tabs = TabsState::new(dir_one);
+
+        tabs.push_new(&dir_two);
+
+        assert_eq!(tabs.count(), 2);
+        assert_eq!(tabs.active_number(), 2);
+        assert_eq!(tabs.tabs[0], dir_two);
+        assert_eq!(tabs.tabs[1], dir_two);
+    }
+
+    #[test]
+    fn switch_to_stores_active_and_returns_target() {
+        let dir_one = PathBuf::from("/one");
+        let dir_two = PathBuf::from("/two");
+        let dir_three = PathBuf::from("/three");
+        let mut tabs = TabsState {
+            tabs: vec![dir_one, dir_two.clone()],
+            active: 0,
+        };
+
+        let next = tabs.switch_to(1, &dir_three);
+
+        assert_eq!(next, Some(dir_two));
+        assert_eq!(tabs.active_number(), 2);
+        assert_eq!(tabs.tabs[0], dir_three);
+    }
+
+    #[test]
+    fn summaries_marks_active_tab() {
+        let dir_one = PathBuf::from("/one");
+        let dir_two = PathBuf::from("/two");
+        let tabs = TabsState {
+            tabs: vec![dir_one.clone(), dir_two.clone()],
+            active: 1,
+        };
+
+        let summaries = tabs.summaries();
+
+        assert_eq!(
+            summaries,
+            vec![
+                TabSummary {
+                    number: 1,
+                    path: dir_one,
+                    active: false,
+                },
+                TabSummary {
+                    number: 2,
+                    path: dir_two,
+                    active: true,
+                },
+            ]
+        );
     }
 }
 
