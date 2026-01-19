@@ -58,11 +58,13 @@ impl MetadataWorker {
     }
 
     pub fn request(&self, request_id: RequestId, path: PathBuf, priority: FetchPriority) {
-        let _ = self.request_tx.send(MetadataCommand::Enqueue(MetadataRequest {
-            request_id,
-            path,
-            priority,
-        }));
+        let _ = self
+            .request_tx
+            .send(MetadataCommand::Enqueue(MetadataRequest {
+                request_id,
+                path,
+                priority,
+            }));
     }
 
     pub fn cancel(&self, request_id: RequestId) {

@@ -51,15 +51,11 @@ pub fn is_new_tab_event(key: KeyEvent) -> bool {
 }
 
 pub fn is_next_tab_event(key: KeyEvent) -> bool {
-    key.kind == KeyEventKind::Press
-        && key.code == KeyCode::Char(']')
-        && key.modifiers.is_empty()
+    key.kind == KeyEventKind::Press && key.code == KeyCode::Char(']') && key.modifiers.is_empty()
 }
 
 pub fn is_prev_tab_event(key: KeyEvent) -> bool {
-    key.kind == KeyEventKind::Press
-        && key.code == KeyCode::Char('[')
-        && key.modifiers.is_empty()
+    key.kind == KeyEventKind::Press && key.code == KeyCode::Char('[') && key.modifiers.is_empty()
 }
 
 pub fn is_slash_activate_event(key: KeyEvent) -> bool {

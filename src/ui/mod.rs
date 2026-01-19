@@ -25,8 +25,8 @@ use crate::{
 
 use crate::core::{
     FetchPriority, GitWorker, MetadataFetchResult, MetadataSnapshot, MetadataStatus,
-    MetadataWindow, RequestId, RequestTracker, PreviewEvent, PreviewFailed, PreviewReady,
-    PreviewRequest,
+    MetadataWindow, PreviewEvent, PreviewFailed, PreviewReady, PreviewRequest, RequestId,
+    RequestTracker,
 };
 use bottom_bar::{format_metadata, render_bottom_bar, render_slash_bar};
 use event::{

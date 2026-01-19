@@ -243,8 +243,7 @@ impl<T: Clone> MetadataWindow<T> {
 
         let start = selected_index.saturating_sub(5);
         let end = (selected_index + 5).min(source.len() - 1);
-        self.items
-            .extend(source[start..=end].iter().cloned());
+        self.items.extend(source[start..=end].iter().cloned());
     }
 
     pub fn items(&self) -> &VecDeque<T> {
@@ -348,7 +347,9 @@ mod tests {
 
         assert_eq!(
             names,
-            (5..=15).map(|index| format!("file-{index}")).collect::<Vec<_>>()
+            (5..=15)
+                .map(|index| format!("file-{index}"))
+                .collect::<Vec<_>>()
         );
     }
 

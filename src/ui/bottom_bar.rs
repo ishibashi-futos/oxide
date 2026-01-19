@@ -396,14 +396,7 @@ mod tests {
         let area = Rect::new(0, 0, 40, 1);
         terminal
             .draw(|frame| {
-                render_bottom_bar(
-                    frame,
-                    area,
-                    None,
-                    Some(MetadataStatus::Loading),
-                    None,
-                    None,
-                )
+                render_bottom_bar(frame, area, None, Some(MetadataStatus::Loading), None, None)
             })
             .unwrap();
 
@@ -420,14 +413,7 @@ mod tests {
         let area = Rect::new(0, 0, 40, 1);
         terminal
             .draw(|frame| {
-                render_bottom_bar(
-                    frame,
-                    area,
-                    None,
-                    Some(MetadataStatus::Error),
-                    None,
-                    None,
-                )
+                render_bottom_bar(frame, area, None, Some(MetadataStatus::Error), None, None)
             })
             .unwrap();
 

@@ -136,8 +136,12 @@ impl App {
         let Some(parent) = self.current_dir.parent() else {
             return Ok(());
         };
+        let focus_child = self
+            .current_dir
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string());
         self.change_dir(parent.to_path_buf());
-        self.refresh()
+        self.refresh_with_selection(focus_child.as_deref())
     }
 
     pub fn selected_entry(&self) -> Option<&Entry> {
@@ -384,19 +388,19 @@ impl App {
     }
 
     fn refresh(&mut self) -> AppResult<()> {
-        self.reload_entries()?;
-        self.cursor = if self.entries.is_empty() {
-            None
-        } else {
-            Some(0)
-        };
-        Ok(())
+        self.refresh_with_selection(None)
     }
 
     fn reload_entries(&mut self) -> AppResult<()> {
         self.entries = list_entries(&self.current_dir, self.show_hidden)?;
         self.parent_entries = list_parent_entries(&self.current_dir, self.show_hidden)?;
         self.clear_search_state();
+        Ok(())
+    }
+
+    fn refresh_with_selection(&mut self, focus_name: Option<&str>) -> AppResult<()> {
+        self.reload_entries()?;
+        self.cursor = resolve_cursor(&self.entries, focus_name, None);
         Ok(())
     }
 
@@ -570,7 +574,11 @@ fn format_slash_error(error: SlashCommandError) -> &'static str {
     }
 }
 
-fn timed_feedback_with(clock: &dyn AppClock, text: String, status: FeedbackStatus) -> SlashFeedback {
+fn timed_feedback_with(
+    clock: &dyn AppClock,
+    text: String,
+    status: FeedbackStatus,
+) -> SlashFeedback {
     SlashFeedback {
         text,
         status,
@@ -606,9 +614,7 @@ fn slash_command_specs() -> &'static [SlashCommandSpec] {
 }
 
 fn slash_command_spec(name: &str) -> Option<&'static SlashCommandSpec> {
-    slash_command_specs()
-        .iter()
-        .find(|spec| spec.name == name)
+    slash_command_specs().iter().find(|spec| spec.name == name)
 }
 
 #[cfg(test)]
@@ -1188,6 +1194,27 @@ mod tests {
         app.move_to_parent().unwrap();
 
         assert_eq!(app.current_dir, temp_dir.path());
+    }
+
+    #[test]
+    fn move_to_parent_focuses_child_entry() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let parent_dir = temp_dir.path().join("parent");
+        std::fs::create_dir(&parent_dir).unwrap();
+        let other = parent_dir.join("alpha");
+        let target = parent_dir.join("target");
+        std::fs::create_dir(&other).unwrap();
+        std::fs::create_dir(&target).unwrap();
+
+        let mut app = App::load(target.clone()).unwrap();
+
+        app.move_to_parent().unwrap();
+
+        assert_eq!(app.current_dir, parent_dir);
+        assert_eq!(
+            app.selected_entry().map(|entry| entry.name.as_str()),
+            Some("target")
+        );
     }
 
     #[test]
