@@ -8,14 +8,75 @@ pub trait EntryOpener {
 }
 
 #[derive(Debug, Clone)]
+struct TabsState {
+    tabs: Vec<PathBuf>,
+    active: usize,
+}
+
+impl TabsState {
+    fn new(current_dir: PathBuf) -> Self {
+        Self {
+            tabs: vec![current_dir],
+            active: 0,
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.tabs.len()
+    }
+
+    fn active_number(&self) -> usize {
+        self.active + 1
+    }
+
+    fn store_active(&mut self, current_dir: &PathBuf) {
+        if let Some(slot) = self.tabs.get_mut(self.active) {
+            *slot = current_dir.clone();
+        }
+    }
+
+    fn push_new(&mut self, current_dir: &PathBuf) {
+        self.store_active(current_dir);
+        self.tabs.push(current_dir.clone());
+        self.active = self.tabs.len().saturating_sub(1);
+    }
+
+    fn next_index(&self) -> Option<usize> {
+        if self.tabs.len() <= 1 {
+            return None;
+        }
+        Some((self.active + 1) % self.tabs.len())
+    }
+
+    fn prev_index(&self) -> Option<usize> {
+        if self.tabs.len() <= 1 {
+            return None;
+        }
+        Some(if self.active == 0 {
+            self.tabs.len().saturating_sub(1)
+        } else {
+            self.active - 1
+        })
+    }
+
+    fn switch_to(&mut self, index: usize, current_dir: &PathBuf) -> Option<PathBuf> {
+        if index >= self.tabs.len() {
+            return None;
+        }
+        self.store_active(current_dir);
+        self.active = index;
+        Some(self.tabs[index].clone())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct App {
     pub current_dir: PathBuf,
     pub entries: Vec<Entry>,
     pub parent_entries: Vec<Entry>,
     pub cursor: Option<usize>,
     pub show_hidden: bool,
-    tabs: Vec<PathBuf>,
-    active_tab: usize,
+    tabs: TabsState,
     search_buffer: String,
     search_origin: Option<usize>,
     slash_input_active: bool,
@@ -36,7 +97,7 @@ impl App {
         cursor: Option<usize>,
         show_hidden: bool,
     ) -> Self {
-        let tabs = vec![current_dir.clone()];
+        let tabs = TabsState::new(current_dir.clone());
         Self {
             current_dir,
             entries,
@@ -44,7 +105,6 @@ impl App {
             cursor,
             show_hidden,
             tabs,
-            active_tab: 0,
             search_buffer: String::new(),
             search_origin: None,
             slash_input_active: false,
@@ -164,37 +224,29 @@ impl App {
     }
 
     pub fn tab_count(&self) -> usize {
-        self.tabs.len()
+        self.tabs.count()
     }
 
     pub fn active_tab_number(&self) -> usize {
-        self.active_tab + 1
+        self.tabs.active_number()
     }
 
     pub fn new_tab(&mut self) -> AppResult<()> {
-        self.store_active_tab();
-        self.tabs.push(self.current_dir.clone());
-        self.active_tab = self.tabs.len().saturating_sub(1);
+        self.tabs.push_new(&self.current_dir);
         self.clear_search_state();
         Ok(())
     }
 
     pub fn next_tab(&mut self) -> AppResult<()> {
-        if self.tabs.len() <= 1 {
+        let Some(next) = self.tabs.next_index() else {
             return Ok(());
-        }
-        let next = (self.active_tab + 1) % self.tabs.len();
+        };
         self.switch_to_tab(next)
     }
 
     pub fn prev_tab(&mut self) -> AppResult<()> {
-        if self.tabs.len() <= 1 {
+        let Some(prev) = self.tabs.prev_index() else {
             return Ok(());
-        }
-        let prev = if self.active_tab == 0 {
-            self.tabs.len().saturating_sub(1)
-        } else {
-            self.active_tab - 1
         };
         self.switch_to_tab(prev)
     }
@@ -418,18 +470,14 @@ impl App {
     }
 
     fn store_active_tab(&mut self) {
-        if let Some(slot) = self.tabs.get_mut(self.active_tab) {
-            *slot = self.current_dir.clone();
-        }
+        self.tabs.store_active(&self.current_dir);
     }
 
     fn switch_to_tab(&mut self, index: usize) -> AppResult<()> {
-        if index >= self.tabs.len() {
+        let Some(next_dir) = self.tabs.switch_to(index, &self.current_dir) else {
             return Ok(());
-        }
-        self.store_active_tab();
-        self.active_tab = index;
-        self.current_dir = self.tabs[index].clone();
+        };
+        self.current_dir = next_dir;
         self.refresh()?;
         Ok(())
     }
