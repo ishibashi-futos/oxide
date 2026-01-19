@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::core::{Entry, SlashCommand, SlashCommandError, list_entries, parse_slash_command};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 pub trait EntryOpener {
     fn open(&self, path: &Path) -> AppResult<()>;
@@ -27,6 +28,23 @@ impl TabsState {
 
     fn active_number(&self) -> usize {
         self.active + 1
+    }
+
+    fn list_text(&self) -> String {
+        if self.tabs.is_empty() {
+            return "tabs:".to_string();
+        }
+        let entries = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                let number = index + 1;
+                let marker = if index == self.active { "*" } else { "" };
+                format!("{number}{marker}:{}", path.display())
+            })
+            .collect::<Vec<String>>();
+        format!("tabs: {}", entries.join(" "))
     }
 
     fn store_active(&mut self, current_dir: &PathBuf) {
@@ -88,6 +106,8 @@ pub struct App {
     slash_history: Vec<String>,
     slash_history_index: Option<usize>,
 }
+
+const SLASH_FEEDBACK_TTL: Duration = Duration::from_secs(4);
 
 impl App {
     pub fn new(
@@ -212,7 +232,11 @@ impl App {
     }
 
     pub fn slash_feedback(&self) -> Option<&SlashFeedback> {
-        self.slash_feedback.as_ref()
+        let feedback = self.slash_feedback.as_ref()?;
+        if feedback.is_expired() {
+            return None;
+        }
+        Some(feedback)
     }
 
     pub fn preview_visible(&self) -> bool {
@@ -300,10 +324,10 @@ impl App {
                 Some(command)
             }
             Err(error) => {
-                self.slash_feedback = Some(SlashFeedback {
-                    text: format!("slash error: {}", format_slash_error(error)),
-                    status: FeedbackStatus::Error,
-                });
+                self.slash_feedback = Some(timed_feedback(
+                    format!("slash error: {}", format_slash_error(error)),
+                    FeedbackStatus::Error,
+                ));
                 None
             }
         }
@@ -485,14 +509,12 @@ impl App {
     fn handle_slash_command(&mut self, command: &SlashCommand) -> SlashFeedback {
         match command.name.as_str() {
             "preview" => self.handle_preview_command(&command.args),
-            "paste" => SlashFeedback {
-                text: "paste: ready".to_string(),
-                status: FeedbackStatus::Success,
-            },
-            _ => SlashFeedback {
-                text: format!("unknown command: {}", command.name),
-                status: FeedbackStatus::Error,
-            },
+            "tab" => self.handle_tab_command(&command.args),
+            "paste" => timed_feedback("paste: ready".to_string(), FeedbackStatus::Success),
+            _ => timed_feedback(
+                format!("unknown command: {}", command.name),
+                FeedbackStatus::Error,
+            ),
         }
     }
 
@@ -514,11 +536,40 @@ impl App {
                 self.preview_paused = true;
                 preview_feedback(false)
             }
-            _ => SlashFeedback {
-                text: "preview: invalid args".to_string(),
-                status: FeedbackStatus::Error,
-            },
+            _ => timed_feedback("preview: invalid args".to_string(), FeedbackStatus::Error),
         }
+    }
+
+    fn handle_tab_command(&mut self, args: &[String]) -> SlashFeedback {
+        match args {
+            [] => self.tab_list_feedback(),
+            [arg] if arg == "new" => match self.new_tab() {
+                Ok(()) => self.tab_list_feedback(),
+                Err(error) => tab_error_feedback(error),
+            },
+            [arg] if arg == "next" => match self.next_tab() {
+                Ok(()) => self.tab_list_feedback(),
+                Err(error) => tab_error_feedback(error),
+            },
+            [arg] if arg == "prev" => match self.prev_tab() {
+                Ok(()) => self.tab_list_feedback(),
+                Err(error) => tab_error_feedback(error),
+            },
+            [arg] => match arg.parse::<usize>() {
+                Ok(number) if number >= 1 && number <= self.tab_count() => {
+                    match self.switch_to_tab(number.saturating_sub(1)) {
+                        Ok(()) => self.tab_list_feedback(),
+                        Err(error) => tab_error_feedback(error),
+                    }
+                }
+                _ => timed_feedback("tab: invalid args".to_string(), FeedbackStatus::Error),
+            },
+            _ => timed_feedback("tab: invalid args".to_string(), FeedbackStatus::Error),
+        }
+    }
+
+    fn tab_list_feedback(&self) -> SlashFeedback {
+        timed_feedback(self.tabs.list_text(), FeedbackStatus::Success)
     }
 
     fn slash_command_prefix(&self) -> Option<&str> {
@@ -532,6 +583,13 @@ impl App {
 pub struct SlashFeedback {
     pub text: String,
     pub status: FeedbackStatus,
+    pub(crate) expires_at: Instant,
+}
+
+impl SlashFeedback {
+    fn is_expired(&self) -> bool {
+        Instant::now() > self.expires_at
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -547,11 +605,23 @@ fn format_slash_error(error: SlashCommandError) -> &'static str {
     }
 }
 
-fn preview_feedback(enabled: bool) -> SlashFeedback {
+fn timed_feedback(text: String, status: FeedbackStatus) -> SlashFeedback {
     SlashFeedback {
-        text: format!("preview: {}", if enabled { "on" } else { "off" }),
-        status: FeedbackStatus::Success,
+        text,
+        status,
+        expires_at: Instant::now() + SLASH_FEEDBACK_TTL,
     }
+}
+
+fn preview_feedback(enabled: bool) -> SlashFeedback {
+    timed_feedback(
+        format!("preview: {}", if enabled { "on" } else { "off" }),
+        FeedbackStatus::Success,
+    )
+}
+
+fn tab_error_feedback(error: AppError) -> SlashFeedback {
+    timed_feedback(format!("tab: {}", error), FeedbackStatus::Error)
 }
 
 struct SlashCommandSpec {
@@ -562,6 +632,11 @@ struct SlashCommandSpec {
 
 fn slash_command_specs() -> &'static [SlashCommandSpec] {
     &[
+        SlashCommandSpec {
+            name: "tab",
+            description: "tabs",
+            options: &["new", "next", "prev", "<number>"],
+        },
         SlashCommandSpec {
             name: "preview",
             description: "toggle preview",
@@ -587,6 +662,20 @@ mod slash_tests {
 
     fn empty_app() -> App {
         App::new(PathBuf::from("."), Vec::new(), Vec::new(), None, false)
+    }
+
+    fn app_with_two_tabs() -> (tempfile::TempDir, App, PathBuf, PathBuf) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir_one = temp_dir.path().join("one");
+        let dir_two = temp_dir.path().join("two");
+        std::fs::create_dir(&dir_one).unwrap();
+        std::fs::create_dir(&dir_two).unwrap();
+
+        let mut app = App::load(dir_one.clone()).unwrap();
+        app.new_tab().unwrap();
+        app.set_current_dir(dir_two.clone());
+
+        (temp_dir, app, dir_one, dir_two)
     }
 
     #[test]
@@ -808,6 +897,63 @@ mod slash_tests {
         let hint = app.slash_hint();
 
         assert!(hint.is_none());
+    }
+
+    #[test]
+    fn slash_feedback_expires_after_ttl() {
+        let mut app = empty_app();
+        app.slash_feedback = Some(SlashFeedback {
+            text: "preview: on".to_string(),
+            status: FeedbackStatus::Success,
+            expires_at: std::time::Instant::now() - std::time::Duration::from_secs(1),
+        });
+
+        assert!(app.slash_feedback().is_none());
+    }
+
+    #[test]
+    fn slash_hint_shows_tab_options() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('t');
+        app.append_slash_char('a');
+        app.append_slash_char('b');
+
+        let hint = app.slash_hint().unwrap();
+
+        assert_eq!(hint, "tabs | options: new, next, prev, <number>");
+    }
+
+    #[test]
+    fn tab_command_lists_tabs() {
+        let (_temp_dir, mut app, dir_one, dir_two) = app_with_two_tabs();
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "tab".to_string(),
+            args: Vec::new(),
+        });
+
+        let expected = format!(
+            "tabs: 1:{} 2*:{}",
+            dir_one.display(),
+            dir_two.display()
+        );
+        assert_eq!(feedback.text, expected);
+        assert_eq!(feedback.status, FeedbackStatus::Success);
+    }
+
+    #[test]
+    fn tab_command_switches_by_number() {
+        let (_temp_dir, mut app, dir_one, _dir_two) = app_with_two_tabs();
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "tab".to_string(),
+            args: vec!["1".to_string()],
+        });
+
+        assert_eq!(feedback.status, FeedbackStatus::Success);
+        assert_eq!(app.current_dir, dir_one);
+        assert_eq!(app.active_tab_number(), 1);
     }
 
     #[test]

@@ -232,6 +232,7 @@ mod tests {
         let feedback = SlashFeedback {
             text: "preview: on".to_string(),
             status: crate::app::FeedbackStatus::Success,
+            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(1),
         };
 
         let backend = TestBackend::new(60, 1);
