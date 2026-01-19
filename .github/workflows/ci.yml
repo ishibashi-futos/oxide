@@ -6,6 +6,9 @@ on:
     tags: ["*"]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   changes:
     name: detect changes
@@ -92,3 +95,7 @@ jobs:
           name: ox-${{ matrix.target }}
           path: ox-${{ matrix.target }}.${{ matrix.artifact_ext }}
           if-no-files-found: error
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ox-${{ matrix.target }}.${{ matrix.artifact_ext }}
