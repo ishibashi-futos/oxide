@@ -14,6 +14,8 @@ pub struct App {
     pub parent_entries: Vec<Entry>,
     pub cursor: Option<usize>,
     pub show_hidden: bool,
+    tabs: Vec<PathBuf>,
+    active_tab: usize,
     search_buffer: String,
     search_origin: Option<usize>,
     slash_input_active: bool,
@@ -34,12 +36,15 @@ impl App {
         cursor: Option<usize>,
         show_hidden: bool,
     ) -> Self {
+        let tabs = vec![current_dir.clone()];
         Self {
             current_dir,
             entries,
             parent_entries,
             cursor,
             show_hidden,
+            tabs,
+            active_tab: 0,
             search_buffer: String::new(),
             search_origin: None,
             slash_input_active: false,
@@ -89,7 +94,7 @@ impl App {
         };
         let target = self.current_dir.join(&selected.name);
         if selected.is_dir {
-            self.current_dir = target;
+            self.set_current_dir(target);
             self.refresh()?;
             return Ok(());
         }
@@ -104,7 +109,7 @@ impl App {
             return Ok(());
         }
         let target = self.current_dir.join(&selected.name);
-        self.current_dir = target;
+        self.set_current_dir(target);
         self.refresh()
     }
 
@@ -112,7 +117,7 @@ impl App {
         let Some(parent) = self.current_dir.parent() else {
             return Ok(());
         };
-        self.current_dir = parent.to_path_buf();
+        self.set_current_dir(parent.to_path_buf());
         self.refresh()
     }
 
@@ -156,6 +161,42 @@ impl App {
 
     pub fn preview_ratio_percent(&self) -> u16 {
         self.preview_ratio_percent
+    }
+
+    pub fn tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+
+    pub fn active_tab_number(&self) -> usize {
+        self.active_tab + 1
+    }
+
+    pub fn new_tab(&mut self) -> AppResult<()> {
+        self.store_active_tab();
+        self.tabs.push(self.current_dir.clone());
+        self.active_tab = self.tabs.len().saturating_sub(1);
+        self.clear_search_state();
+        Ok(())
+    }
+
+    pub fn next_tab(&mut self) -> AppResult<()> {
+        if self.tabs.len() <= 1 {
+            return Ok(());
+        }
+        let next = (self.active_tab + 1) % self.tabs.len();
+        self.switch_to_tab(next)
+    }
+
+    pub fn prev_tab(&mut self) -> AppResult<()> {
+        if self.tabs.len() <= 1 {
+            return Ok(());
+        }
+        let prev = if self.active_tab == 0 {
+            self.tabs.len().saturating_sub(1)
+        } else {
+            self.active_tab - 1
+        };
+        self.switch_to_tab(prev)
     }
 
     pub fn activate_slash_input(&mut self) {
@@ -369,6 +410,28 @@ impl App {
             Some(index) => clamp_cursor(&self.entries, index),
             None => clamp_cursor(&self.entries, 0).or(self.cursor),
         };
+    }
+
+    fn set_current_dir(&mut self, path: PathBuf) {
+        self.current_dir = path;
+        self.store_active_tab();
+    }
+
+    fn store_active_tab(&mut self) {
+        if let Some(slot) = self.tabs.get_mut(self.active_tab) {
+            *slot = self.current_dir.clone();
+        }
+    }
+
+    fn switch_to_tab(&mut self, index: usize) -> AppResult<()> {
+        if index >= self.tabs.len() {
+            return Ok(());
+        }
+        self.store_active_tab();
+        self.active_tab = index;
+        self.current_dir = self.tabs[index].clone();
+        self.refresh()?;
+        Ok(())
     }
 
     fn handle_slash_command(&mut self, command: &SlashCommand) -> SlashFeedback {
@@ -1086,6 +1149,36 @@ mod tests {
 
         app.backspace_search_char();
         assert_eq!(app.cursor, Some(0));
+    }
+
+    #[test]
+    fn new_tab_adds_and_selects() {
+        let mut app = App::new(PathBuf::from("/tmp"), Vec::new(), Vec::new(), None, false);
+
+        app.new_tab().unwrap();
+
+        assert_eq!(app.tab_count(), 2);
+        assert_eq!(app.active_tab_number(), 2);
+    }
+
+    #[test]
+    fn switching_tabs_restores_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir_one = temp_dir.path().join("one");
+        let dir_two = temp_dir.path().join("two");
+        std::fs::create_dir(&dir_one).unwrap();
+        std::fs::create_dir(&dir_two).unwrap();
+
+        let mut app = App::load(dir_one.clone()).unwrap();
+        app.new_tab().unwrap();
+
+        app.set_current_dir(dir_two.clone());
+
+        app.prev_tab().unwrap();
+        assert_eq!(app.current_dir, dir_one);
+
+        app.next_tab().unwrap();
+        assert_eq!(app.current_dir, dir_two);
     }
 
     #[derive(Default)]
