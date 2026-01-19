@@ -23,7 +23,11 @@ use crate::{
     error::AppResult,
 };
 
-use crate::core::{GitWorker, PreviewEvent, PreviewFailed, PreviewReady, PreviewRequest};
+use crate::core::{
+    FetchPriority, GitWorker, MetadataFetchResult, MetadataSnapshot, MetadataStatus,
+    MetadataWindow, RequestId, RequestTracker, PreviewEvent, PreviewFailed, PreviewReady,
+    PreviewRequest,
+};
 use bottom_bar::{format_metadata, render_bottom_bar, render_slash_bar};
 use event::{
     is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event, is_new_tab_event,
@@ -46,6 +50,12 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
     let preview_worker = PreviewWorker::new();
     let mut last_metadata_path: Option<std::path::PathBuf> = None;
     let mut metadata_display: Option<String> = None;
+    let mut metadata_status: Option<MetadataStatus> = None;
+    let mut request_tracker = RequestTracker::new();
+    let mut metadata_snapshot = MetadataSnapshot::new();
+    let mut active_metadata_request: Option<RequestId> = None;
+    let mut metadata_window: MetadataWindow<std::path::PathBuf> = MetadataWindow::new();
+    let mut metadata_cache_dir: Option<std::path::PathBuf> = None;
     let mut last_git_dir: Option<std::path::PathBuf> = None;
     let mut git_display: Option<String> = None;
     let mut last_preview_path: Option<std::path::PathBuf> = None;
@@ -55,23 +65,88 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
 
     loop {
         let current_path = app.selected_entry_path();
+        if metadata_cache_dir.as_ref() != Some(&app.current_dir) {
+            metadata_snapshot.clear();
+            metadata_cache_dir = Some(app.current_dir.clone());
+        }
         while let Some(result) = metadata_worker.poll() {
-            if Some(&result.path) != current_path.as_ref() {
+            if !request_tracker.is_latest(result.request_id) {
                 continue;
             }
-            match result.metadata {
-                Some(metadata) => {
-                    metadata_display = Some(format_metadata(&metadata));
+            let is_selected = Some(&result.path) == current_path.as_ref();
+            let mut metadata_for_display = None;
+            let metadata_result = match result.metadata {
+                Ok(metadata) => {
+                    if is_selected {
+                        metadata_for_display = Some(metadata.clone());
+                    }
+                    Ok(metadata)
                 }
-                None => {
-                    metadata_display = None;
+                Err(error) => {
+                    if is_selected {
+                        metadata_display = None;
+                        metadata_status = Some(MetadataStatus::Error);
+                    }
+                    Err(error)
                 }
             };
+            metadata_snapshot.apply(MetadataFetchResult {
+                request_id: result.request_id,
+                path: result.path,
+                metadata: metadata_result,
+            });
+            if let Some(metadata) = metadata_for_display {
+                metadata_display = Some(format_metadata(&metadata));
+                metadata_status = None;
+            }
+        }
+        if metadata_display.is_none() {
+            if let Some(path) = current_path.as_ref() {
+                if let Some(metadata) = metadata_snapshot.get(path) {
+                    metadata_display = Some(format_metadata(metadata));
+                    metadata_status = None;
+                }
+            }
         }
         if current_path != last_metadata_path {
             metadata_display = None;
             if let Some(path) = current_path.clone() {
-                metadata_worker.request(path);
+                let request_id = request_tracker.next();
+                if let Some(previous) = active_metadata_request {
+                    metadata_worker.cancel(previous);
+                }
+                active_metadata_request = Some(request_id);
+                if metadata_snapshot.get(&path).is_some() {
+                    metadata_status = None;
+                } else {
+                    metadata_status = Some(MetadataStatus::Loading);
+                }
+                let selected_index = app.cursor.unwrap_or(0);
+                let paths: Vec<std::path::PathBuf> = app
+                    .entries
+                    .iter()
+                    .map(|entry| app.current_dir.join(&entry.name))
+                    .collect();
+                let selected_path = path.clone();
+                metadata_window.refresh(&paths, selected_index);
+                for prefetch_path in metadata_window.items().iter().cloned() {
+                    if metadata_snapshot.get(&prefetch_path).is_some() {
+                        continue;
+                    }
+                    let priority = if prefetch_path == selected_path {
+                        FetchPriority::High
+                    } else {
+                        FetchPriority::Low
+                    };
+                    metadata_worker.request(request_id, prefetch_path, priority);
+                }
+            } else {
+                metadata_status = None;
+                if let Some(previous) = active_metadata_request {
+                    metadata_worker.cancel(previous);
+                }
+                active_metadata_request = None;
+                metadata_window.refresh(&[], 0);
             }
             last_metadata_path = current_path.clone();
         }
@@ -126,6 +201,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
                 frame,
                 &app,
                 metadata_display.as_deref(),
+                metadata_status,
                 git_display.as_deref(),
                 &preview_state,
             )
@@ -221,6 +297,7 @@ fn draw(
     frame: &mut Frame<'_>,
     app: &App,
     metadata_display: Option<&str>,
+    metadata_status: Option<MetadataStatus>,
     git_display: Option<&str>,
     preview_state: &PreviewState,
 ) {
@@ -261,6 +338,7 @@ fn draw(
         frame,
         bottom,
         metadata_display,
+        metadata_status,
         git_display,
         app.slash_feedback(),
     );

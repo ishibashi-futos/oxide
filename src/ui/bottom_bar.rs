@@ -7,17 +7,24 @@ use ratatui::{
 };
 
 use crate::app::SlashFeedback;
-use crate::core::EntryMetadata;
+use crate::core::{EntryMetadata, MetadataStatus};
 use crate::tabs::TabSummary;
 
 pub fn render_bottom_bar(
     frame: &mut Frame<'_>,
     area: Rect,
     metadata: Option<&str>,
+    metadata_status: Option<MetadataStatus>,
     git: Option<&str>,
     feedback: Option<&SlashFeedback>,
 ) {
-    let bar = Paragraph::new(build_bottom_bar(metadata, git, feedback, area.width));
+    let bar = Paragraph::new(build_bottom_bar(
+        metadata,
+        metadata_status,
+        git,
+        feedback,
+        area.width,
+    ));
     frame.render_widget(bar, area);
 }
 
@@ -35,13 +42,12 @@ pub fn render_slash_bar(
 
 fn build_bottom_bar(
     metadata: Option<&str>,
+    metadata_status: Option<MetadataStatus>,
     git: Option<&str>,
     feedback: Option<&SlashFeedback>,
     width: u16,
 ) -> String {
-    let metadata_line = metadata
-        .map(|value| value.to_string())
-        .unwrap_or_else(placeholder_metadata);
+    let metadata_line = metadata_line(metadata, metadata_status);
     let left = if let Some(feedback) = feedback {
         let feedback_text = if let Some(tabs) = feedback.tabs.as_deref() {
             format_tabs(tabs)
@@ -50,6 +56,8 @@ fn build_bottom_bar(
         };
         if feedback_text.is_empty() {
             metadata_line
+        } else if metadata_line.is_empty() {
+            feedback_text
         } else {
             format!("{} | {}", feedback_text, metadata_line)
         }
@@ -132,8 +140,14 @@ pub fn format_metadata(metadata: &EntryMetadata) -> String {
     )
 }
 
-fn placeholder_metadata() -> String {
-    "size: - | modified: -".to_string()
+fn metadata_line(metadata: Option<&str>, metadata_status: Option<MetadataStatus>) -> String {
+    if let Some(status) = metadata_status {
+        return match status {
+            MetadataStatus::Loading => "metadata: loading".to_string(),
+            MetadataStatus::Error => "metadata: error".to_string(),
+        };
+    }
+    metadata.map(|value| value.to_string()).unwrap_or_default()
 }
 
 fn placeholder_git() -> String {
@@ -215,7 +229,14 @@ mod tests {
         let area = Rect::new(0, 0, 120, 1);
         terminal
             .draw(|frame| {
-                render_bottom_bar(frame, area, Some(&metadata_line), Some("git: main"), None)
+                render_bottom_bar(
+                    frame,
+                    area,
+                    Some(&metadata_line),
+                    None,
+                    Some("git: main"),
+                    None,
+                )
             })
             .unwrap();
 
@@ -227,18 +248,18 @@ mod tests {
     }
 
     #[test]
-    fn render_bottom_bar_shows_placeholder_when_missing() {
+    fn render_bottom_bar_hides_metadata_when_missing() {
         let backend = TestBackend::new(30, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 30, 1);
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None, None))
+            .draw(|frame| render_bottom_bar(frame, area, None, None, None, None))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
         let line = buffer_line(buffer, 0, 30);
 
-        assert!(line.contains("size: - | modified: -"));
+        assert!(!line.contains("size: - | modified: -"));
         assert!(line.contains("git: -"));
     }
 
@@ -265,6 +286,7 @@ mod tests {
                     frame,
                     area,
                     Some(&metadata_line),
+                    None,
                     Some("git: main"),
                     Some(&feedback),
                 )
@@ -302,7 +324,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 60, 1);
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None, Some(&feedback)))
+            .draw(|frame| render_bottom_bar(frame, area, None, None, None, Some(&feedback)))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -365,6 +387,54 @@ mod tests {
 
         assert!(line.contains("toggle preview"));
         assert!(line.contains("options: show, hide"));
+    }
+
+    #[test]
+    fn render_bottom_bar_shows_metadata_loading() {
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 40, 1);
+        terminal
+            .draw(|frame| {
+                render_bottom_bar(
+                    frame,
+                    area,
+                    None,
+                    Some(MetadataStatus::Loading),
+                    None,
+                    None,
+                )
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 40);
+
+        assert!(line.contains("metadata: loading"));
+    }
+
+    #[test]
+    fn render_bottom_bar_shows_metadata_error() {
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 40, 1);
+        terminal
+            .draw(|frame| {
+                render_bottom_bar(
+                    frame,
+                    area,
+                    None,
+                    Some(MetadataStatus::Error),
+                    None,
+                    None,
+                )
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 40);
+
+        assert!(line.contains("metadata: error"));
     }
 
     fn assert_datetime_format(value: &str) {
