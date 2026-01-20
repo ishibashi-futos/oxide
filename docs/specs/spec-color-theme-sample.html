@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>Oxide タブカラーテーマ一覧</title>
+  <style>
+    body {
+      font-family: "Noto Sans JP", "Inter", sans-serif;
+      background: #0F1116;
+      color: #EEF2F7;
+      margin: 0;
+      padding: 24px;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    p {
+      margin-top: 0;
+    }
+    .grid {
+      display: grid;
+      gap: 24px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      margin-top: 16px;
+    }
+    .card {
+      border-radius: 12px;
+      padding: 16px;
+      background: #161821;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .theme-name {
+      font-size: 1.15rem;
+      font-weight: 600;
+    }
+    .swatches {
+      margin-top: 16px;
+      display: grid;
+      gap: 8px;
+    }
+    .swatch {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 0.88rem;
+    }
+    .swatch-label {
+      font-weight: 500;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+    .swatch-code {
+      font-family: "JetBrains Mono", "Space Mono", monospace;
+      font-size: 0.85rem;
+      text-align: right;
+      white-space: nowrap;
+      color: #d2d7e3;
+    }
+    .swatch-color {
+      width: 48px;
+      height: 24px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    .semantic-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    small {
+      color: #9aa3b8;
+    }
+  </style>
+</head>
+<body>
+  <h1>Oxide タブカラーテーマ一覧</h1>
+  <p>各テーマはタブボーダー、選択/フォーカス、セカンダリ領域、semantic フィードバックなどで異なる色を使います。ここでは視覚的にテーマを確認できます。</p>
+  <div class="grid">
+    <article class="card">
+      <div class="card-header">
+        <span class="theme-name">Glacier Coast</span>
+        <small>クールな青</small>
+      </div>
+      <div class="swatches">
+        <div class="swatch" style="background:#1F242A">
+          <span class="swatch-label">Base / Border</span>
+          <div class="swatch-color" style="background:#4E6C92"></div>
+          <span class="swatch-code">#4E6C92</span>
+        </div>
+        <div class="swatch" style="background:#1F242A">
+          <span class="swatch-label">Primary</span>
+          <div class="swatch-color" style="background:#8AB4F8"></div>
+          <span class="swatch-code">#8AB4F8</span>
+        </div>
+        <div class="swatch" style="background:#1F242A">
+          <span class="swatch-label">Secondary</span>
+          <div class="swatch-color" style="background:#6AA0E7"></div>
+          <span class="swatch-code">#6AA0E7</span>
+        </div>
+        <div class="semantic-grid">
+          <div class="swatch" style="background:#1F242A">
+            <span class="swatch-label">Success</span>
+            <div class="swatch-color" style="background:#5EC38F"></div>
+            <span class="swatch-code">#5EC38F</span>
+          </div>
+          <div class="swatch" style="background:#1F242A">
+            <span class="swatch-label">Warn</span>
+            <div class="swatch-color" style="background:#F4B04C"></div>
+            <span class="swatch-code">#F4B04C</span>
+          </div>
+          <div class="swatch" style="background:#1F242A">
+            <span class="swatch-label">Error</span>
+            <div class="swatch-color" style="background:#E38A90"></div>
+            <span class="swatch-code">#E38A90</span>
+          </div>
+          <div class="swatch" style="background:#1F242A">
+            <span class="swatch-label">Info</span>
+            <div class="swatch-color" style="background:#5DD0FF"></div>
+            <span class="swatch-code">#5DD0FF</span>
+          </div>
+        </div>
+        <div class="swatch" style="background:#1F242A">
+          <span class="swatch-label">Grayscale Low</span>
+          <div class="swatch-color" style="background:#1F242A"></div>
+          <span class="swatch-code">#1F242A</span>
+        </div>
+        <div class="swatch" style="background:#1F242A">
+          <span class="swatch-label">Grayscale High</span>
+          <div class="swatch-color" style="background:#DDE4ED"></div>
+          <span class="swatch-code">#DDE4ED</span>
+        </div>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-header">
+        <span class="theme-name">Night Harbor</span>
+        <small>ティールの深み</small>
+      </div>
+      <div class="swatches">
+        <div class="swatch" style="background:#21262A">
+          <span class="swatch-label">Base / Border</span>
+          <div class="swatch-color" style="background:#3E5A63"></div>
+          <span class="swatch-code">#3E5A63</span>
+        </div>
+        <div class="swatch" style="background:#21262A">
+          <span class="swatch-label">Primary</span>
+          <div class="swatch-color" style="background:#7ED0D9"></div>
+          <span class="swatch-code">#7ED0D9</span>
+        </div>
+        <div class="swatch" style="background:#21262A">
+          <span class="swatch-label">Secondary</span>
+          <div class="swatch-color" style="background:#5CA9B4"></div>
+          <span class="swatch-code">#5CA9B4</span>
+        </div>
+        <div class="semantic-grid">
+          <div class="swatch" style="background:#21262A">
+            <span class="swatch-label">Success</span>
+            <div class="swatch-color" style="background:#3CC48C"></div>
+            <span class="swatch-code">#3CC48C</span>
+          </div>
+          <div class="swatch" style="background:#21262A">
+            <span class="swatch-label">Warn</span>
+            <div class="swatch-color" style="background:#F2A666"></div>
+            <span class="swatch-code">#F2A666</span>
+          </div>
+          <div class="swatch" style="background:#21262A">
+            <span class="swatch-label">Error</span>
+            <div class="swatch-color" style="background:#D67278"></div>
+            <span class="swatch-code">#D67278</span>
+          </div>
+          <div class="swatch" style="background:#21262A">
+            <span class="swatch-label">Info</span>
+            <div class="swatch-color" style="background:#5FB7FF"></div>
+            <span class="swatch-code">#5FB7FF</span>
+          </div>
+        </div>
+        <div class="swatch" style="background:#21262A">
+          <span class="swatch-label">Grayscale Low</span>
+          <div class="swatch-color" style="background:#21262A"></div>
+          <span class="swatch-code">#21262A</span>
+        </div>
+        <div class="swatch" style="background:#21262A">
+          <span class="swatch-label">Grayscale High</span>
+          <div class="swatch-color" style="background:#CED7E0"></div>
+          <span class="swatch-code">#CED7E0</span>
+        </div>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-header">
+        <span class="theme-name">Slate Dawn</span>
+        <small>静かな朝の紫</small>
+      </div>
+      <div class="swatches">
+        <div class="swatch" style="background:#20252E">
+          <span class="swatch-label">Base / Border</span>
+          <div class="swatch-color" style="background:#4B5161"></div>
+          <span class="swatch-code">#4B5161</span>
+        </div>
+        <div class="swatch" style="background:#20252E">
+          <span class="swatch-label">Primary</span>
+          <div class="swatch-color" style="background:#9AA2B7"></div>
+          <span class="swatch-code">#9AA2B7</span>
+        </div>
+        <div class="swatch" style="background:#20252E">
+          <span class="swatch-label">Secondary</span>
+          <div class="swatch-color" style="background:#7C86A3"></div>
+          <span class="swatch-code">#7C86A3</span>
+        </div>
+        <div class="semantic-grid">
+          <div class="swatch" style="background:#20252E">
+            <span class="swatch-label">Success</span>
+            <div class="swatch-color" style="background:#6BC8A4"></div>
+            <span class="swatch-code">#6BC8A4</span>
+          </div>
+          <div class="swatch" style="background:#20252E">
+            <span class="swatch-label">Warn</span>
+            <div class="swatch-color" style="background:#F0AD6C"></div>
+            <span class="swatch-code">#F0AD6C</span>
+          </div>
+          <div class="swatch" style="background:#20252E">
+            <span class="swatch-label">Error</span>
+            <div class="swatch-color" style="background:#DA7D7D"></div>
+            <span class="swatch-code">#DA7D7D</span>
+          </div>
+          <div class="swatch" style="background:#20252E">
+            <span class="swatch-label">Info</span>
+            <div class="swatch-color" style="background:#76B0FF"></div>
+            <span class="swatch-code">#76B0FF</span>
+          </div>
+        </div>
+        <div class="swatch" style="background:#20252E">
+          <span class="swatch-label">Grayscale Low</span>
+          <div class="swatch-color" style="background:#20252E"></div>
+          <span class="swatch-code">#20252E</span>
+        </div>
+        <div class="swatch" style="background:#20252E">
+          <span class="swatch-label">Grayscale High</span>
+          <div class="swatch-color" style="background:#D3D7DF"></div>
+          <span class="swatch-code">#D3D7DF</span>
+        </div>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-header">
+        <span class="theme-name">Aurora Drift</span>
+        <small>北欧のコールドグリーン</small>
+      </div>
+      <div class="swatches">
+        <div class="swatch" style="background:#1E2420">
+          <span class="swatch-label">Base / Border</span>
+          <div class="swatch-color" style="background:#4E5F4F"></div>
+          <span class="swatch-code">#4E5F4F</span>
+        </div>
+        <div class="swatch" style="background:#1E2420">
+          <span class="swatch-label">Primary</span>
+          <div class="swatch-color" style="background:#A4D8C3"></div>
+          <span class="swatch-code">#A4D8C3</span>
+        </div>
+        <div class="swatch" style="background:#1E2420">
+          <span class="swatch-label">Secondary</span>
+          <div class="swatch-color" style="background:#7EBCA8"></div>
+          <span class="swatch-code">#7EBCA8</span>
+        </div>
+        <div class="semantic-grid">
+          <div class="swatch" style="background:#1E2420">
+            <span class="swatch-label">Success</span>
+            <div class="swatch-color" style="background:#50C073"></div>
+            <span class="swatch-code">#50C073</span>
+          </div>
+          <div class="swatch" style="background:#1E2420">
+            <span class="swatch-label">Warn</span>
+            <div class="swatch-color" style="background:#F7BF5C"></div>
+            <span class="swatch-code">#F7BF5C</span>
+          </div>
+          <div class="swatch" style="background:#1E2420">
+            <span class="swatch-label">Error</span>
+            <div class="swatch-color" style="background:#E0827A"></div>
+            <span class="swatch-code">#E0827A</span>
+          </div>
+          <div class="swatch" style="background:#1E2420">
+            <span class="swatch-label">Info</span>
+            <div class="swatch-color" style="background:#8FD2FF"></div>
+            <span class="swatch-code">#8FD2FF</span>
+          </div>
+        </div>
+        <div class="swatch" style="background:#1E2420">
+          <span class="swatch-label">Grayscale Low</span>
+          <div class="swatch-color" style="background:#1E2420"></div>
+          <span class="swatch-code">#1E2420</span>
+        </div>
+        <div class="swatch" style="background:#1E2420">
+          <span class="swatch-label">Grayscale High</span>
+          <div class="swatch-color" style="background:#D7E3D7"></div>
+          <span class="swatch-code">#D7E3D7</span>
+        </div>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-header">
+        <span class="theme-name">Deep Forest</span>
+        <small>森の奥を思わせる</small>
+      </div>
+      <div class="swatches">
+        <div class="swatch" style="background:#1C221C">
+          <span class="swatch-label">Base / Border</span>
+          <div class="swatch-color" style="background:#3F4F46"></div>
+          <span class="swatch-code">#3F4F46</span>
+        </div>
+        <div class="swatch" style="background:#1C221C">
+          <span class="swatch-label">Primary</span>
+          <div class="swatch-color" style="background:#8AC6A5"></div>
+          <span class="swatch-code">#8AC6A5</span>
+        </div>
+        <div class="swatch" style="background:#1C221C">
+          <span class="swatch-label">Secondary</span>
+          <div class="swatch-color" style="background:#65A08A"></div>
+          <span class="swatch-code">#65A08A</span>
+        </div>
+        <div class="semantic-grid">
+          <div class="swatch" style="background:#1C221C">
+            <span class="swatch-label">Success</span>
+            <div class="swatch-color" style="background:#48B87B"></div>
+            <span class="swatch-code">#48B87B</span>
+          </div>
+          <div class="swatch" style="background:#1C221C">
+            <span class="swatch-label">Warn</span>
+            <div class="swatch-color" style="background:#F0B15A"></div>
+            <span class="swatch-code">#F0B15A</span>
+          </div>
+          <div class="swatch" style="background:#1C221C">
+            <span class="swatch-label">Error</span>
+            <div class="swatch-color" style="background:#DD7B80"></div>
+            <span class="swatch-code">#DD7B80</span>
+          </div>
+          <div class="swatch" style="background:#1C221C">
+            <span class="swatch-label">Info</span>
+            <div class="swatch-color" style="background:#7DAFFF"></div>
+            <span class="swatch-code">#7DAFFF</span>
+          </div>
+        </div>
+        <div class="swatch" style="background:#1C221C">
+          <span class="swatch-label">Grayscale Low</span>
+          <div class="swatch-color" style="background:#1C221C"></div>
+          <span class="swatch-code">#1C221C</span>
+        </div>
+        <div class="swatch" style="background:#1C221C">
+          <span class="swatch-label">Grayscale High</span>
+          <div class="swatch-color" style="background:#CCD7D3"></div>
+          <span class="swatch-code">#CCD7D3</span>
+        </div>
+      </div>
+    </article>
+  </div>
+</body>
+</html>
