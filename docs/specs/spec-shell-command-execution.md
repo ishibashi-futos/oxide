@@ -55,7 +55,7 @@
 3. [x] 実行ガードテスト: temp ディレクトリで `echo hi` を起動し、`OX_SAFE_ENV` のみで `stdout` が得られるか確認。
 4. [x] 権限テスト: `OX_ALLOW_SHELL=false` で `SlashFeedback` が警告となり、実行しないことを確認。
 5. [x] UI 統合テスト: `SlashFeedback` の表示が Bottom Bar と履歴に渡ることを確認し、`shell` 実行後の Bottom Bar 文字列が期待通りかを snapshot。
-6. [ ] Path Intellisense実装&テスト: `/shell ./build.sh ./di` で最後のトークンだけが補完対象となり、Tab 確定でスペースが挿入されることを確認。新しいトークン完成後も既存ログが保持されることを検証。
+6. [x] Path Intellisense実装&テスト: `/shell ./build.sh ./di` で最後のトークンだけが補完対象となり、Tab 確定でスペースが挿入されることを確認。新しいトークン完成後も既存ログが保持されることを検証。
 
 ## 7. 文書間リンク
 
