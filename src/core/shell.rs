@@ -313,6 +313,8 @@ fn ensure_args_within_working_dir(
         .canonicalize()
         .unwrap_or_else(|_| normalize_path(working_dir));
     let base = comparable_path(&base);
+    #[cfg(windows)]
+    let base_str = comparable_path_string(&base);
     args.iter().try_for_each(|arg| {
         if arg.trim().is_empty() {
             return Ok(());
@@ -332,6 +334,15 @@ fn ensure_args_within_working_dir(
             normalize_path(&full)
         };
         let normalized = comparable_path(&normalized);
+        #[cfg(windows)]
+        {
+            let normalized_str = comparable_path_string(&normalized);
+            if !is_within_dir_string(&base_str, &normalized_str) {
+                return Err(ShellCommandError::PathEscapesWorkingDir);
+            }
+            return Ok(());
+        }
+        #[cfg(not(windows))]
         if !normalized.starts_with(&base) {
             return Err(ShellCommandError::PathEscapesWorkingDir);
         }
@@ -349,6 +360,27 @@ fn comparable_path(path: &Path) -> PathBuf {
     {
         normalized
     }
+}
+
+#[cfg(windows)]
+fn comparable_path_string(path: &Path) -> String {
+    let normalized = normalize_path(path);
+    let normalized = strip_verbatim_prefix(&normalized);
+    let value = normalized.to_string_lossy().replace('/', "\\");
+    value.to_ascii_lowercase()
+}
+
+#[cfg(windows)]
+fn is_within_dir_string(base: &str, candidate: &str) -> bool {
+    if candidate == base {
+        return true;
+    }
+    let mut prefix = String::with_capacity(base.len() + 1);
+    prefix.push_str(base);
+    if !base.ends_with('\\') {
+        prefix.push('\\');
+    }
+    candidate.starts_with(&prefix)
 }
 
 #[cfg(windows)]
