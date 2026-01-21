@@ -83,7 +83,7 @@ fn parse_bool_value(value: &str) -> Option<bool> {
 }
 
 fn config_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+    let base = std::env::var_os("OX_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
     Some(base.join(Path::new("oxide").join("config.toml")))
