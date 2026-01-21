@@ -312,6 +312,7 @@ fn ensure_args_within_working_dir(
     let base = working_dir
         .canonicalize()
         .unwrap_or_else(|_| normalize_path(working_dir));
+    let base = comparable_path(&base);
     args.iter().try_for_each(|arg| {
         if arg.trim().is_empty() {
             return Ok(());
@@ -330,11 +331,34 @@ fn ensure_args_within_working_dir(
         } else {
             normalize_path(&full)
         };
+        let normalized = comparable_path(&normalized);
         if !normalized.starts_with(&base) {
             return Err(ShellCommandError::PathEscapesWorkingDir);
         }
         Ok(())
     })
+}
+
+fn comparable_path(path: &Path) -> PathBuf {
+    let normalized = normalize_path(path);
+    #[cfg(windows)]
+    {
+        strip_verbatim_prefix(&normalized)
+    }
+    #[cfg(not(windows))]
+    {
+        normalized
+    }
+}
+
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    let value = path.as_os_str().to_string_lossy();
+    if let Some(stripped) = value.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
+    }
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -412,5 +436,14 @@ mod tests {
 
         assert_eq!(result.status_code, Some(0));
         assert!(result.stdout.trim().contains("hi"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn comparable_path_strips_verbatim_prefix() {
+        let path = PathBuf::from(r"\\?\C:\Temp\foo");
+        let base = PathBuf::from(r"C:\Temp");
+        let normalized = comparable_path(&path);
+        assert!(normalized.starts_with(&base));
     }
 }
