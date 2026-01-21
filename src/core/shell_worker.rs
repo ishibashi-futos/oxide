@@ -28,51 +28,9 @@ impl ShellWorker {
         let (event_tx, event_rx) = mpsc::channel::<ShellEvent>();
 
         thread::spawn(move || {
-            for request in request_rx {
-                let guard = ShellExecutionGuard::new();
-                let start = Instant::now();
-                let timestamp_ms = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map(|duration| duration.as_millis())
-                    .unwrap_or(0);
-                let mut command = guard.build_command(&request);
-                command.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-                let mut child = match command.spawn() {
-                    Ok(child) => child,
-                    Err(error) => {
-                        let _ =
-                            event_tx.send(ShellEvent::Failed(format!("shell: {error}")));
-                        continue;
-                    }
-                };
-
-                let stdout_handle = child
-                    .stdout
-                    .take()
-                    .map(|stdout| spawn_reader(stdout, event_tx.clone(), StreamKind::Stdout));
-                let stderr_handle = child
-                    .stderr
-                    .take()
-                    .map(|stderr| spawn_reader(stderr, event_tx.clone(), StreamKind::Stderr));
-
-                let status = child.wait().ok();
-                let stdout = stdout_handle
-                    .and_then(|handle| handle.join().ok())
-                    .unwrap_or_default();
-                let stderr = stderr_handle
-                    .and_then(|handle| handle.join().ok())
-                    .unwrap_or_default();
-
-                let result = ShellExecutionResult {
-                    status_code: status.and_then(|status| status.code()),
-                    stdout: String::from_utf8_lossy(&stdout).to_string(),
-                    stderr: String::from_utf8_lossy(&stderr).to_string(),
-                    duration_ms: start.elapsed().as_millis(),
-                    timestamp_ms,
-                };
-                let _ = event_tx.send(ShellEvent::Finished(result));
-            }
+            request_rx
+                .into_iter()
+                .for_each(|request| handle_request(request, &event_tx));
         });
 
         Self {
@@ -94,6 +52,51 @@ impl ShellWorker {
 enum StreamKind {
     Stdout,
     Stderr,
+}
+
+fn handle_request(request: ShellCommandRequest, event_tx: &Sender<ShellEvent>) {
+    let guard = ShellExecutionGuard::new();
+    let start = Instant::now();
+    let timestamp_ms = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let mut command = guard.build_command(&request);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = event_tx.send(ShellEvent::Failed(format!("shell: {error}")));
+            return;
+        }
+    };
+
+    let stdout_handle = child
+        .stdout
+        .take()
+        .map(|stdout| spawn_reader(stdout, event_tx.clone(), StreamKind::Stdout));
+    let stderr_handle = child
+        .stderr
+        .take()
+        .map(|stderr| spawn_reader(stderr, event_tx.clone(), StreamKind::Stderr));
+
+    let status = child.wait().ok();
+    let stdout = stdout_handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr_handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+
+    let result = ShellExecutionResult {
+        status_code: status.and_then(|status| status.code()),
+        stdout: String::from_utf8_lossy(&stdout).to_string(),
+        stderr: String::from_utf8_lossy(&stderr).to_string(),
+        duration_ms: start.elapsed().as_millis(),
+        timestamp_ms,
+    };
+    let _ = event_tx.send(ShellEvent::Finished(result));
 }
 
 fn spawn_reader<R: std::io::Read + Send + 'static>(

@@ -70,42 +70,58 @@ impl ShellCommandParser {
         if trimmed.is_empty() {
             return Err(ShellCommandError::MissingCommand);
         }
-        let mut args = Vec::new();
-        let mut buffer = String::new();
-        let mut quote: Option<char> = None;
-        for ch in trimmed.chars() {
-            match quote {
+        let mut state = trimmed.chars().fold(ParseState::new(), |mut state, ch| {
+            match state.quote {
                 Some(active) => {
                     if ch == active {
-                        quote = None;
+                        state.quote = None;
                     } else {
-                        buffer.push(ch);
+                        state.buffer.push(ch);
                     }
                 }
                 None => match ch {
                     '\'' | '"' => {
-                        quote = Some(ch);
+                        state.quote = Some(ch);
                     }
                     ch if ch.is_whitespace() => {
-                        if !buffer.is_empty() {
-                            args.push(buffer.clone());
-                            buffer.clear();
-                        }
+                        state.push_buffer();
                     }
-                    _ => buffer.push(ch),
+                    _ => state.buffer.push(ch),
                 },
             }
-        }
-        if quote.is_some() {
+            state
+        });
+        if state.quote.is_some() {
             return Err(ShellCommandError::UnterminatedQuote);
         }
-        if !buffer.is_empty() {
-            args.push(buffer);
-        }
-        if args.is_empty() {
+        state.push_buffer();
+        if state.args.is_empty() {
             return Err(ShellCommandError::MissingCommand);
         }
-        Ok(args)
+        Ok(state.args)
+    }
+}
+
+#[derive(Debug)]
+struct ParseState {
+    args: Vec<String>,
+    buffer: String,
+    quote: Option<char>,
+}
+
+impl ParseState {
+    fn new() -> Self {
+        Self {
+            args: Vec::new(),
+            buffer: String::new(),
+            quote: None,
+        }
+    }
+
+    fn push_buffer(&mut self) {
+        if !self.buffer.is_empty() {
+            self.args.push(std::mem::take(&mut self.buffer));
+        }
     }
 }
 
@@ -205,9 +221,12 @@ impl ShellExecutionGuard {
             .current_dir(&request.working_dir);
         if !self.allowed_shell.inherit_env() {
             command.env_clear();
-            for (key, value) in self.safe_env.entries.iter() {
-                command.env(key, value);
-            }
+            self.safe_env
+                .entries
+                .iter()
+                .for_each(|(key, value)| {
+                    command.env(key, value);
+                });
         }
         command
     }
@@ -264,17 +283,17 @@ struct SafeEnv {
 
 impl SafeEnv {
     fn from_env() -> Self {
-        let mut entries = Vec::new();
         let keys = std::env::var("OX_SAFE_ENV").unwrap_or_default();
-        for key in keys.split(',') {
-            let name = key.trim();
-            if name.is_empty() {
-                continue;
-            }
-            if let Ok(value) = std::env::var(name) {
-                entries.push((name.to_string(), value));
-            }
-        }
+        let entries = keys
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .filter_map(|name| {
+                std::env::var(name)
+                    .ok()
+                    .map(|value| (name.to_string(), value))
+            })
+            .collect();
         Self { entries }
     }
 }
@@ -293,13 +312,13 @@ fn ensure_args_within_working_dir(
     let base = working_dir
         .canonicalize()
         .unwrap_or_else(|_| normalize_path(working_dir));
-    for arg in args {
+    args.iter().try_for_each(|arg| {
         if arg.trim().is_empty() {
-            continue;
+            return Ok(());
         }
         let candidate = Path::new(arg);
         if !looks_like_path(candidate) {
-            continue;
+            return Ok(());
         }
         let full = if candidate.is_absolute() {
             candidate.to_path_buf()
@@ -314,13 +333,12 @@ fn ensure_args_within_working_dir(
         if !normalized.starts_with(&base) {
             return Err(ShellCommandError::PathEscapesWorkingDir);
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
+    path.components().fold(PathBuf::new(), |mut normalized, component| {
         match component {
             std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
@@ -328,23 +346,25 @@ fn normalize_path(path: &Path) -> PathBuf {
             }
             _ => normalized.push(component.as_os_str()),
         }
-    }
-    normalized
+        normalized
+    })
 }
 
 fn looks_like_path(path: &Path) -> bool {
     if path.is_absolute() {
         return true;
     }
-    let mut count = 0;
-    for component in path.components() {
-        count += 1;
-        match component {
-            std::path::Component::CurDir | std::path::Component::ParentDir => return true,
-            _ => {}
-        }
-    }
-    count > 1
+    let (count, seen_dot) =
+        path.components().fold((0usize, false), |(count, seen_dot), component| {
+            let count = count + 1;
+            let seen_dot = seen_dot
+                || matches!(
+                    component,
+                    std::path::Component::CurDir | std::path::Component::ParentDir
+                );
+            (count, seen_dot)
+        });
+    seen_dot || count > 1
 }
 
 #[cfg(test)]
@@ -354,10 +374,10 @@ mod tests {
     #[test]
     fn sanitize_rejects_shell_operators() {
         let samples = ["echo a && b", "echo a; b", "echo a | b", "echo $(a)", "`echo a`"];
-        for input in samples {
+        samples.iter().for_each(|input| {
             let result = ShellCommandParser::sanitize_args(input);
             assert_eq!(result, Err(ShellCommandError::ForbiddenOperator));
-        }
+        });
     }
 
     #[test]
