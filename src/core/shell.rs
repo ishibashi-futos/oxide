@@ -309,12 +309,21 @@ fn ensure_args_within_working_dir(
     working_dir: &Path,
     args: &[String],
 ) -> Result<(), ShellCommandError> {
+    #[cfg(not(windows))]
     let base = working_dir
         .canonicalize()
         .unwrap_or_else(|_| normalize_path(working_dir));
+    #[cfg(not(windows))]
     let base = comparable_path(&base);
+
     #[cfg(windows)]
-    let base_str = comparable_path_string(&base);
+    let base_raw = normalize_path(working_dir);
+    #[cfg(windows)]
+    let base_raw_str = comparable_path_string(&base_raw);
+    #[cfg(windows)]
+    let base_canon = working_dir.canonicalize().unwrap_or_else(|_| base_raw.clone());
+    #[cfg(windows)]
+    let base_canon_str = comparable_path_string(&base_canon);
     args.iter().try_for_each(|arg| {
         if arg.trim().is_empty() {
             return Ok(());
@@ -328,25 +337,36 @@ fn ensure_args_within_working_dir(
         } else {
             working_dir.join(candidate)
         };
-        let normalized = if full.exists() {
-            full.canonicalize().unwrap_or_else(|_| normalize_path(&full))
-        } else {
-            normalize_path(&full)
-        };
-        let normalized = comparable_path(&normalized);
-        #[cfg(windows)]
+        #[cfg(not(windows))]
         {
-            let normalized_str = comparable_path_string(&normalized);
-            if !is_within_dir_string(&base_str, &normalized_str) {
+            let normalized = if full.exists() {
+                full.canonicalize().unwrap_or_else(|_| normalize_path(&full))
+            } else {
+                normalize_path(&full)
+            };
+            let normalized = comparable_path(&normalized);
+            if !normalized.starts_with(&base) {
                 return Err(ShellCommandError::PathEscapesWorkingDir);
             }
             return Ok(());
         }
-        #[cfg(not(windows))]
-        if !normalized.starts_with(&base) {
-            return Err(ShellCommandError::PathEscapesWorkingDir);
+
+        #[cfg(windows)]
+        {
+            let normalized_raw = normalize_path(&full);
+            let normalized_raw_str = comparable_path_string(&normalized_raw);
+            let mut ok = is_within_dir_string(&base_raw_str, &normalized_raw_str);
+            if full.exists() {
+                let normalized_canon =
+                    full.canonicalize().unwrap_or_else(|_| normalize_path(&full));
+                let normalized_canon_str = comparable_path_string(&normalized_canon);
+                ok = ok || is_within_dir_string(&base_canon_str, &normalized_canon_str);
+            }
+            if !ok {
+                return Err(ShellCommandError::PathEscapesWorkingDir);
+            }
+            return Ok(());
         }
-        Ok(())
     })
 }
 
