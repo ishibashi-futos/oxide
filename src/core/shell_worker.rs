@@ -105,41 +105,54 @@ fn spawn_reader<R: std::io::Read + Send + 'static>(
     kind: StreamKind,
 ) -> thread::JoinHandle<Vec<u8>> {
     thread::spawn(move || {
-        let mut collected = Vec::new();
-        let mut total = 0usize;
-        let mut reader = BufReader::new(reader);
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let read = match reader.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(read) => read,
-                Err(_) => break,
-            };
-            if read == 0 {
-                break;
-            }
+        collect_stream(reader, &event_tx, kind)
+    })
+}
+
+fn collect_stream<R: std::io::Read>(
+    reader: R,
+    event_tx: &Sender<ShellEvent>,
+    kind: StreamKind,
+) -> Vec<u8> {
+    let reader = BufReader::new(reader);
+    let (collected, _) =
+        read_lines(reader).fold((Vec::new(), 0usize), |(mut collected, total), line| {
             let trimmed = line.trim_end_matches(['\n', '\r']).to_string();
             let event = match kind {
                 StreamKind::Stdout => ShellEvent::Stdout(trimmed),
                 StreamKind::Stderr => ShellEvent::Stderr(trimmed),
             };
             let _ = event_tx.send(event);
-            if total < MAX_CAPTURE_BYTES {
+            let total = if total < MAX_CAPTURE_BYTES {
                 let remaining = MAX_CAPTURE_BYTES - total;
                 let bytes = line.as_bytes();
                 let take = remaining.min(bytes.len());
                 collected.extend_from_slice(&bytes[..take]);
-                total += take;
-            }
+                total + take
+            } else {
+                total
+            };
+            (collected, total)
+        });
+    collected
+}
+
+fn read_lines<R: std::io::Read>(
+    mut reader: BufReader<R>,
+) -> impl Iterator<Item = String> {
+    std::iter::from_fn(move || {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => None,
+            Ok(_) => Some(line),
         }
-        collected
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -177,5 +190,33 @@ mod tests {
         assert_eq!(stdout_lines, vec!["one".to_string(), "two".to_string()]);
         assert!(result.stdout.contains("one"));
         assert!(result.stdout.contains("two"));
+    }
+
+    #[test]
+    fn read_lines_yields_all_lines() {
+        let input = "one\ntwo\nthree";
+        let reader = BufReader::new(Cursor::new(input));
+        let lines: Vec<String> = read_lines(reader).collect();
+        assert_eq!(
+            lines,
+            vec!["one\n".to_string(), "two\n".to_string(), "three".to_string()]
+        );
+    }
+
+    #[test]
+    fn collect_stream_emits_events_and_caps_bytes() {
+        let payload = "a".repeat(MAX_CAPTURE_BYTES + 10);
+        let input = format!("{payload}\n");
+        let (event_tx, event_rx) = mpsc::channel();
+
+        let collected = collect_stream(Cursor::new(input), &event_tx, StreamKind::Stdout);
+        let events: Vec<ShellEvent> = event_rx.try_iter().collect();
+
+        assert_eq!(collected.len(), MAX_CAPTURE_BYTES);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ShellEvent::Stdout(line) => assert_eq!(line.len(), MAX_CAPTURE_BYTES + 10),
+            event => panic!("unexpected event: {event:?}"),
+        }
     }
 }
