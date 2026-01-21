@@ -62,16 +62,16 @@ Goal: 「プロの道具」としての堅牢性を高めます。
 - [x] txt, md 等一部形式ファイルのファイルプレビューの表示
 - [ ] プレビューでのシンタックスハイライト表示 `syntect`
 - [ ] headless 環境向けに opener を無効化できる設定を追加する
+- [ ] openerで開くアプリケーションの関連付けを設定ファイルなどで選べる（どのアプリに対して呼び出すか決められる）
 - [x] フォルダを `<-` で戻ったとき、子フォルダをフォーカスできる
 - [ ] つい `Ctrl + C` でアプリを終わらせたくなるので、 `Ctrl + C` を ２回押したら終われるようにする。１回目は警告・一定時間以内 `3sec以内` に２回目が押されたら、ほんとに終了
-- [ ] `/` から始まるコマンド
-  - [ ] `/cwd /path/to`: Path IntelliSence 付きの、`cd` 機能
 - [ ] `/shell {command}`: working directory 内で default shell でコマンド実行(PowerShell/Shell)
   - TODO: AllowedShell 機構は別途検討し、将来的に特定シェルを明示的に選べるようにする。
   - TODO: AllowedShell 機構は別途検討し、将来的に特定シェルを明示的に選べるようにする。
-  - 既知事項: Windows の UNC パス (`\\server\share` / `\\?\UNC\server\share`) の比較が未対応。  
-     
+  - 既知事項: Windows の UNC パス (`\\server\share` / `\\?\UNC\server\share`) の比較が未対応。
     共有フォルダを使う環境では `PathEscapesWorkingDir` の誤検知が起きる可能性がある。
+- [ ] `/` から始まるコマンド
+  - [ ] `/cwd /path/to`: Path IntelliSence 付きの、`cd` 機能
   - [ ] `/help`: ヘルプドキュメントの閲覧
   - [ ] `/clip`: クリップボードにファイルをコピーする
   - [ ] `/clip`: クリップボードにパスをコピーする
