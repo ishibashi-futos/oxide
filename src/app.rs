@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use crate::config::Config;
 use crate::core::{
     ColorTheme, ColorThemeId, Entry, SlashCommand, SlashCommandError, list_entries,
-    parse_slash_command, ShellCommandError, ShellCommandRequest, ShellExecutionGuard,
-    ShellExecutionResult, ShellPermission,
+    parse_slash_command, ShellCommandError, ShellCommandRequest,
+    ShellExecutionResult, ShellEvent, ShellPermission, ShellWorker,
 };
 use crate::error::{AppError, AppResult};
 use crate::tabs::{TabSummary, TabsState};
@@ -29,7 +29,7 @@ impl AppClock for SystemClock {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct App {
     pub current_dir: PathBuf,
     pub entries: Vec<Entry>,
@@ -50,6 +50,7 @@ pub struct App {
     slash_history: Vec<String>,
     slash_history_index: Option<usize>,
     shell_permission: ShellPermission,
+    shell_worker: ShellWorker,
     shell_output_view: ShellOutputView,
     shell_output_active: bool,
 }
@@ -106,6 +107,7 @@ impl App {
             slash_history: Vec::new(),
             slash_history_index: None,
             shell_permission: ShellPermission::from_env(config.allow_shell),
+            shell_worker: ShellWorker::new(),
             shell_output_view: ShellOutputView::new(),
             shell_output_active: false,
         }
@@ -491,6 +493,27 @@ impl App {
         self.shell_output_active = !self.shell_output_active;
     }
 
+    pub fn poll_shell_events(&mut self) {
+        while let Some(event) = self.shell_worker.poll() {
+            match event {
+                ShellEvent::Stdout(line) => {
+                    self.shell_output_view.append_stdout_line(&line);
+                }
+                ShellEvent::Stderr(line) => {
+                    self.shell_output_view.append_stderr_line(&line);
+                }
+                ShellEvent::Finished(result) => {
+                    self.shell_output_view.finish(&result);
+                    self.slash_feedback = Some(self.shell_result_feedback(&result));
+                }
+                ShellEvent::Failed(error) => {
+                    self.shell_output_view.append_stderr_line(&error);
+                    self.slash_feedback = Some(self.timed_feedback(error, FeedbackStatus::Error));
+                }
+            }
+        }
+    }
+
     pub fn close_shell_output(&mut self) {
         self.shell_output_active = false;
     }
@@ -708,14 +731,9 @@ impl App {
             Ok(request) => request,
             Err(error) => return self.shell_error_feedback(error),
         };
-        let guard = ShellExecutionGuard::new();
-        match guard.execute(&request) {
-            Ok(result) => {
-                self.shell_output_view.reset(&request, &result);
-                self.shell_result_feedback(&result)
-            }
-            Err(error) => self.timed_feedback(error.to_string(), FeedbackStatus::Error),
-        }
+        self.shell_output_view.start(&request);
+        self.shell_worker.request(request);
+        self.timed_feedback("shell: running".to_string(), FeedbackStatus::Success)
     }
 
     fn tab_list_feedback(&self) -> SlashFeedback {
@@ -1011,6 +1029,8 @@ struct ShellOutputView {
     max_lines: usize,
     scroll_offset: usize,
     horiz_offset: usize,
+    stdout_opened: bool,
+    stderr_opened: bool,
 }
 
 impl ShellOutputView {
@@ -1022,6 +1042,8 @@ impl ShellOutputView {
             max_lines: 4_000,
             scroll_offset: 0,
             horiz_offset: 0,
+            stdout_opened: false,
+            stderr_opened: false,
         }
     }
 
@@ -1029,11 +1051,14 @@ impl ShellOutputView {
         self.lines.is_empty()
     }
 
+    #[cfg(test)]
     fn reset(&mut self, request: &ShellCommandRequest, result: &ShellExecutionResult) {
         self.lines.clear();
         self.total_bytes = 0;
         self.scroll_offset = 0;
         self.horiz_offset = 0;
+        self.stdout_opened = false;
+        self.stderr_opened = false;
         self.push_line(format!("$ {}", request.raw_command));
         self.push_line(format!("cwd: {}", request.working_dir.display()));
         let exit = result.status_code.unwrap_or(-1);
@@ -1042,11 +1067,50 @@ impl ShellOutputView {
             exit, result.duration_ms, result.timestamp_ms
         ));
         if !result.stdout.trim().is_empty() {
-            self.push_line("stdout:".to_string());
+            self.open_stdout();
             self.push_text(&result.stdout);
         }
         if !result.stderr.trim().is_empty() {
-            self.push_line("stderr:".to_string());
+            self.open_stderr();
+            self.push_text(&result.stderr);
+        }
+        self.shrink_to_limits();
+    }
+
+    fn start(&mut self, request: &ShellCommandRequest) {
+        self.lines.clear();
+        self.total_bytes = 0;
+        self.scroll_offset = 0;
+        self.horiz_offset = 0;
+        self.stdout_opened = false;
+        self.stderr_opened = false;
+        self.push_line(format!("$ {}", request.raw_command));
+        self.push_line(format!("cwd: {}", request.working_dir.display()));
+        self.push_line("status: running".to_string());
+    }
+
+    fn append_stdout_line(&mut self, line: &str) {
+        self.open_stdout();
+        self.push_line(line.to_string());
+    }
+
+    fn append_stderr_line(&mut self, line: &str) {
+        self.open_stderr();
+        self.push_line(line.to_string());
+    }
+
+    fn finish(&mut self, result: &ShellExecutionResult) {
+        let exit = result.status_code.unwrap_or(-1);
+        self.push_line(format!(
+            "exit: {} duration: {}ms timestamp: {}",
+            exit, result.duration_ms, result.timestamp_ms
+        ));
+        if !self.stdout_opened && !result.stdout.trim().is_empty() {
+            self.open_stdout();
+            self.push_text(&result.stdout);
+        }
+        if !self.stderr_opened && !result.stderr.trim().is_empty() {
+            self.open_stderr();
             self.push_text(&result.stderr);
         }
         self.shrink_to_limits();
@@ -1119,6 +1183,20 @@ impl ShellOutputView {
         self.total_bytes += line.as_bytes().len() + 1;
         self.lines.push_back(line);
         self.shrink_to_limits();
+    }
+
+    fn open_stdout(&mut self) {
+        if !self.stdout_opened {
+            self.push_line("stdout:".to_string());
+            self.stdout_opened = true;
+        }
+    }
+
+    fn open_stderr(&mut self) {
+        if !self.stderr_opened {
+            self.push_line("stderr:".to_string());
+            self.stderr_opened = true;
+        }
     }
 
     fn shrink_to_limits(&mut self) {

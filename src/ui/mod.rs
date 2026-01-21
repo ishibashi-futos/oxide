@@ -74,6 +74,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
         if let Some(event) = app.take_tab_color_changed() {
             theme_state.apply(event);
         }
+        app.poll_shell_events();
         let current_path = app.selected_entry_path();
         if metadata_cache_dir.as_ref() != Some(&app.current_dir) {
             metadata_snapshot.clear();

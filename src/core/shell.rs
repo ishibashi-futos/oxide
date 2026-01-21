@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(test)]
 use std::time::{Instant, SystemTime};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,11 +39,13 @@ impl std::fmt::Display for ShellCommandError {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellExecutionError {
     SpawnFailed(String),
 }
 
+#[cfg(test)]
 impl std::fmt::Display for ShellExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -172,6 +175,7 @@ impl ShellExecutionGuard {
         }
     }
 
+    #[cfg(test)]
     pub fn execute(
         &self,
         request: &ShellCommandRequest,
@@ -181,16 +185,7 @@ impl ShellExecutionGuard {
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|duration| duration.as_millis())
             .unwrap_or(0);
-        let mut command = Command::new(self.allowed_shell.path());
-        command
-            .args(self.allowed_shell.args(&request.raw_command))
-            .current_dir(&request.working_dir);
-        if !self.allowed_shell.inherit_env() {
-            command.env_clear();
-            for (key, value) in self.safe_env.entries.iter() {
-                command.env(key, value);
-            }
-        }
+        let mut command = self.build_command(request);
         let output = command
             .output()
             .map_err(|error| ShellExecutionError::SpawnFailed(error.to_string()))?;
@@ -201,6 +196,20 @@ impl ShellExecutionGuard {
             duration_ms: start.elapsed().as_millis(),
             timestamp_ms,
         })
+    }
+
+    pub(crate) fn build_command(&self, request: &ShellCommandRequest) -> Command {
+        let mut command = Command::new(self.allowed_shell.path());
+        command
+            .args(self.allowed_shell.args(&request.raw_command))
+            .current_dir(&request.working_dir);
+        if !self.allowed_shell.inherit_env() {
+            command.env_clear();
+            for (key, value) in self.safe_env.entries.iter() {
+                command.env(key, value);
+            }
+        }
+        command
     }
 }
 
