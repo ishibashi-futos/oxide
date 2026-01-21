@@ -411,6 +411,11 @@ impl App {
                 items: color_theme_candidates(prefix),
             };
         }
+        if let Some(target) = self.shell_completion_target() {
+            return SlashCandidates {
+                items: self.shell_path_candidates(&target.prefix),
+            };
+        }
         let items = slash_command_specs()
             .iter()
             .map(|spec| spec.name)
@@ -424,6 +429,23 @@ impl App {
     }
 
     pub fn complete_slash_candidate(&mut self) {
+        if let Some(target) = self.shell_completion_target() {
+            let Some(candidate) = self.shell_path_candidates(&target.prefix).into_iter().next()
+            else {
+                return;
+            };
+            let mut buffer = String::new();
+            buffer.push_str(&self.slash_input_buffer[..target.range.start]);
+            buffer.push_str(&candidate.text);
+            if !candidate.text.ends_with('/') && !candidate.text.ends_with(std::path::MAIN_SEPARATOR)
+            {
+                buffer.push(' ');
+            }
+            buffer.push_str(&self.slash_input_buffer[target.range.end..]);
+            self.slash_input_buffer = buffer;
+            self.slash_history_index = None;
+            return;
+        }
         let Some(candidate) = self.slash_candidates().items.into_iter().next() else {
             return;
         };
@@ -725,6 +747,72 @@ impl App {
         None
     }
 
+    fn shell_completion_target(&self) -> Option<ShellCompletionTarget> {
+        let input = self.slash_input_buffer.as_str();
+        let after = input.strip_prefix("/shell")?;
+        if after.is_empty() {
+            return None;
+        }
+        if !after.starts_with(char::is_whitespace) {
+            return None;
+        }
+        let has_trailing_space = input.chars().last().map(|ch| ch.is_whitespace()).unwrap_or(false);
+        let (start, end) = if has_trailing_space {
+            (input.len(), input.len())
+        } else {
+            let trimmed = input.trim_end();
+            let end = trimmed.len();
+            let start = trimmed
+                .char_indices()
+                .rev()
+                .find(|(_, ch)| ch.is_whitespace())
+                .map(|(idx, ch)| idx + ch.len_utf8())
+                .unwrap_or(0);
+            (start, end)
+        };
+        let prefix = if start == end {
+            String::new()
+        } else {
+            input[start..end].to_string()
+        };
+        Some(ShellCompletionTarget {
+            range: start..end,
+            prefix,
+        })
+    }
+
+    fn shell_path_candidates(&self, prefix: &str) -> Vec<SlashCandidate> {
+        if prefix.contains('"') || prefix.contains('\'') {
+            return Vec::new();
+        }
+        let (dir_prefix, name_prefix) = split_path_prefix(prefix);
+        let base_dir = if Path::new(prefix).is_absolute() {
+            PathBuf::from(&dir_prefix)
+        } else {
+            self.current_dir.join(&dir_prefix)
+        };
+        let entries = match list_entries(&base_dir, self.show_hidden) {
+            Ok(entries) => entries,
+            Err(_) => return Vec::new(),
+        };
+        entries
+            .into_iter()
+            .filter(|entry| entry.name.starts_with(&name_prefix))
+            .map(|entry| {
+                let mut text = String::new();
+                text.push_str(&dir_prefix);
+                text.push_str(&entry.name);
+                if entry.is_dir {
+                    text.push('/');
+                }
+                SlashCandidate {
+                    text,
+                    description: None,
+                }
+            })
+            .collect()
+    }
+
     fn timed_feedback(&self, text: String, status: FeedbackStatus) -> SlashFeedback {
         timed_feedback_with(self.clock.as_ref(), text, status)
     }
@@ -770,6 +858,12 @@ pub struct TabColorChanged {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandContext {
     Tab(u64),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellCompletionTarget {
+    range: std::ops::Range<usize>,
+    prefix: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -892,6 +986,21 @@ fn color_theme_candidates(prefix: &str) -> Vec<SlashCandidate> {
 
 fn hex_color(color: crate::core::ColorRgb) -> String {
     format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b)
+}
+
+fn split_path_prefix(raw: &str) -> (String, String) {
+    if raw.is_empty() {
+        return (String::new(), String::new());
+    }
+    let separator = std::path::MAIN_SEPARATOR;
+    if raw.ends_with('/') || raw.ends_with(separator) {
+        return (raw.to_string(), String::new());
+    }
+    if let Some(index) = raw.rfind(|ch| ch == '/' || ch == separator) {
+        let (dir, file) = raw.split_at(index + 1);
+        return (dir.to_string(), file.to_string());
+    }
+    (String::new(), raw.to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -1299,6 +1408,84 @@ mod slash_tests {
         app.complete_slash_candidate();
 
         assert_eq!(app.slash_input_text(), "/preview h");
+    }
+
+    #[test]
+    fn shell_candidates_target_last_token_only() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(temp_dir.path().join("build.sh"), "echo").unwrap();
+        std::fs::create_dir(temp_dir.path().join("dir")).unwrap();
+        std::fs::write(temp_dir.path().join("diary.txt"), "note").unwrap();
+
+        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        app.slash_input_active = true;
+        app.slash_input_buffer = "/shell ./build.sh ./di".to_string();
+
+        let candidates = app.slash_candidates();
+        let texts = candidates
+            .items
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect::<Vec<String>>();
+
+        assert_eq!(
+            texts,
+            vec!["./diary.txt".to_string(), "./dir/".to_string()]
+        );
+    }
+
+    #[test]
+    fn shell_completion_replaces_last_token_and_appends_space() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp_dir.path().join("dir")).unwrap();
+        std::fs::write(temp_dir.path().join("diary.txt"), "note").unwrap();
+
+        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        app.slash_input_active = true;
+        app.slash_input_buffer = "/shell ./build.sh ./di".to_string();
+
+        app.complete_slash_candidate();
+
+        assert_eq!(app.slash_input_text(), "/shell ./build.sh ./diary.txt ");
+    }
+
+    #[test]
+    fn shell_completion_skips_space_for_directory() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp_dir.path().join("src")).unwrap();
+
+        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        app.slash_input_active = true;
+        app.slash_input_buffer = "/shell ./sr".to_string();
+
+        app.complete_slash_candidate();
+
+        assert_eq!(app.slash_input_text(), "/shell ./src/");
+    }
+
+    #[test]
+    fn shell_completion_keeps_existing_shell_output() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(temp_dir.path().join("diary.txt"), "note").unwrap();
+        let request =
+            ShellCommandRequest::new(temp_dir.path().to_path_buf(), "echo hi").unwrap();
+        let result = ShellExecutionResult {
+            status_code: Some(0),
+            stdout: "ok".to_string(),
+            stderr: String::new(),
+            duration_ms: 12,
+            timestamp_ms: 1,
+        };
+
+        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        app.shell_output_view.reset(&request, &result);
+        let before = app.shell_output_view.lines.clone();
+        app.slash_input_active = true;
+        app.slash_input_buffer = "/shell ./di".to_string();
+
+        app.complete_slash_candidate();
+
+        assert_eq!(app.shell_output_view.lines, before);
     }
 
     #[test]
