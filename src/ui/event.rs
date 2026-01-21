@@ -14,6 +14,14 @@ pub fn is_cursor_down_event(key: KeyEvent) -> bool {
     key.kind == KeyEventKind::Press && key.code == KeyCode::Down
 }
 
+pub fn is_cursor_left_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::Left
+}
+
+pub fn is_cursor_right_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::Right
+}
+
 pub fn is_enter_event(key: KeyEvent) -> bool {
     key.kind == KeyEventKind::Press && key.code == KeyCode::Enter
 }
@@ -48,6 +56,28 @@ pub fn is_new_tab_event(key: KeyEvent) -> bool {
     key.kind == KeyEventKind::Press
         && key.code == KeyCode::Char('t')
         && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+pub fn is_shell_output_toggle_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press
+        && key.code == KeyCode::Char('o')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+pub fn is_page_up_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::PageUp
+}
+
+pub fn is_page_down_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::PageDown
+}
+
+pub fn is_home_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::Home
+}
+
+pub fn is_end_event(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::End
 }
 
 pub fn is_next_tab_event(key: KeyEvent) -> bool {
@@ -162,6 +192,18 @@ mod tests {
     }
 
     #[test]
+    fn is_cursor_left_event_accepts_left() {
+        let key = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
+        assert!(is_cursor_left_event(key));
+    }
+
+    #[test]
+    fn is_cursor_right_event_accepts_right() {
+        let key = KeyEvent::new(KeyCode::Right, KeyModifiers::NONE);
+        assert!(is_cursor_right_event(key));
+    }
+
+    #[test]
     fn is_enter_dir_event_allows_right_bracket() {
         let key = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE);
         assert!(!is_enter_dir_event(key));
@@ -207,6 +249,36 @@ mod tests {
     fn is_new_tab_event_accepts_ctrl_t() {
         let key = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL);
         assert!(is_new_tab_event(key));
+    }
+
+    #[test]
+    fn is_shell_output_toggle_event_accepts_ctrl_o() {
+        let key = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+        assert!(is_shell_output_toggle_event(key));
+    }
+
+    #[test]
+    fn is_page_up_event_accepts_page_up() {
+        let key = KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE);
+        assert!(is_page_up_event(key));
+    }
+
+    #[test]
+    fn is_page_down_event_accepts_page_down() {
+        let key = KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE);
+        assert!(is_page_down_event(key));
+    }
+
+    #[test]
+    fn is_home_event_accepts_home() {
+        let key = KeyEvent::new(KeyCode::Home, KeyModifiers::NONE);
+        assert!(is_home_event(key));
+    }
+
+    #[test]
+    fn is_end_event_accepts_end() {
+        let key = KeyEvent::new(KeyCode::End, KeyModifiers::NONE);
+        assert!(is_end_event(key));
     }
 
     #[test]

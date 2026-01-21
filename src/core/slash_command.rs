@@ -2,6 +2,7 @@
 pub struct SlashCommand {
     pub name: String,
     pub args: Vec<String>,
+    pub raw: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +27,7 @@ pub fn parse_slash_command(input: &str) -> Result<SlashCommand, SlashCommandErro
     Ok(SlashCommand {
         name: name.to_string(),
         args,
+        raw: trimmed.to_string(),
     })
 }
 
@@ -39,6 +41,7 @@ mod tests {
 
         assert_eq!(command.name, "preview");
         assert!(command.args.is_empty());
+        assert_eq!(command.raw, "/preview");
     }
 
     #[test]
@@ -47,6 +50,7 @@ mod tests {
 
         assert_eq!(command.name, "preview");
         assert_eq!(command.args, vec!["hide".to_string()]);
+        assert_eq!(command.raw, "/preview hide");
     }
 
     #[test]
@@ -55,5 +59,6 @@ mod tests {
 
         assert_eq!(command.name, "preview");
         assert_eq!(command.args, vec!["show".to_string()]);
+        assert_eq!(command.raw, "/preview show");
     }
 }
