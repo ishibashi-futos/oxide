@@ -5,6 +5,7 @@ use crate::core::ColorThemeId;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Config {
     pub default_theme: Option<ColorThemeId>,
+    pub allow_shell: bool,
 }
 
 impl Config {
@@ -21,6 +22,7 @@ impl Config {
 
 fn parse_config(content: &str) -> Config {
     let mut default_theme = None;
+    let mut allow_shell = false;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -29,14 +31,22 @@ fn parse_config(content: &str) -> Config {
         let Some((key, value)) = trimmed.split_once('=') else {
             continue;
         };
-        if key.trim() != "default_theme" {
-            continue;
-        }
-        if let Some(name) = parse_string_value(value) {
-            default_theme = ColorThemeId::from_name(&name);
+        match key.trim() {
+            "default_theme" => {
+                if let Some(name) = parse_string_value(value) {
+                    default_theme = ColorThemeId::from_name(&name);
+                }
+            }
+            "allow_shell" => {
+                allow_shell = parse_bool_value(value).unwrap_or(false);
+            }
+            _ => continue,
         }
     }
-    Config { default_theme }
+    Config {
+        default_theme,
+        allow_shell,
+    }
 }
 
 fn parse_string_value(value: &str) -> Option<String> {
@@ -62,6 +72,16 @@ fn parse_string_value(value: &str) -> Option<String> {
     }
 }
 
+fn parse_bool_value(value: &str) -> Option<bool> {
+    let raw = parse_string_value(value)?;
+    let normalized = raw.to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
 fn config_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -81,6 +101,13 @@ mod tests {
             config.default_theme,
             Some(ColorThemeId::GlacierCoast)
         );
+    }
+
+    #[test]
+    fn parse_config_reads_allow_shell() {
+        let config = parse_config("allow_shell = true");
+
+        assert!(config.allow_shell);
     }
 
     #[test]
