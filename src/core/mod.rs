@@ -2,6 +2,8 @@ mod entries;
 mod git;
 mod metadata;
 mod preview;
+mod shell;
+mod shell_worker;
 mod slash_command;
 mod theme;
 
@@ -15,5 +17,10 @@ pub use preview::{
     PreviewContent, PreviewError, PreviewEvent, PreviewFailed, PreviewReady, PreviewRequest,
     load_preview,
 };
+pub use shell::{
+    ShellCommandError, ShellCommandRequest, ShellExecutionGuard, ShellExecutionResult,
+    ShellPermission,
+};
+pub use shell_worker::{ShellEvent, ShellWorker};
 pub use slash_command::{SlashCommand, SlashCommandError, parse_slash_command};
 pub use theme::{ColorRgb, ColorTheme, ColorThemeId};

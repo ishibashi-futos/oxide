@@ -5,6 +5,7 @@ mod main_pane;
 mod metadata_worker;
 mod preview_pane;
 mod preview_worker;
+mod shell_output_view;
 mod theme;
 mod top_bar;
 
@@ -31,17 +32,21 @@ use crate::core::{
 };
 use bottom_bar::{format_metadata, render_bottom_bar, render_slash_bar};
 use event::{
-    is_cursor_down_event, is_cursor_up_event, is_enter_dir_event, is_enter_event, is_new_tab_event,
-    is_next_tab_event, is_parent_event, is_prev_tab_event, is_quit_event,
+    is_cursor_down_event, is_cursor_left_event, is_cursor_right_event, is_cursor_up_event,
+    is_end_event, is_enter_dir_event, is_enter_event, is_home_event, is_new_tab_event,
+    is_next_tab_event, is_page_down_event, is_page_up_event, is_parent_event, is_prev_tab_event,
+    is_quit_event,
     is_search_backspace_event, is_search_reset_event, is_slash_activate_event,
     is_slash_cancel_event, is_slash_complete_event, is_slash_history_next_event,
-    is_slash_history_prev_event, is_toggle_hidden_event, search_char, slash_input_char,
+    is_slash_history_prev_event, is_shell_output_toggle_event, is_toggle_hidden_event,
+    search_char, slash_input_char,
 };
 use layout::{split_main, split_panes};
 use main_pane::render_entry_list;
 use metadata_worker::MetadataWorker;
 use preview_pane::{PreviewPaneState, render_preview_pane};
 use preview_worker::PreviewWorker;
+use shell_output_view::render_shell_output_view;
 use top_bar::render_top_bar;
 
 pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
@@ -69,6 +74,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
         if let Some(event) = app.take_tab_color_changed() {
             theme_state.apply(event);
         }
+        app.poll_shell_events();
         let current_path = app.selected_entry_path();
         if metadata_cache_dir.as_ref() != Some(&app.current_dir) {
             metadata_snapshot.clear();
@@ -216,6 +222,48 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
         if crossterm_event::poll(Duration::from_millis(200))?
             && let Event::Key(key) = crossterm_event::read()?
         {
+            if is_quit_event(key) {
+                break;
+            }
+            if app.shell_output_active() {
+                if is_shell_output_toggle_event(key) || is_search_reset_event(key) {
+                    app.close_shell_output();
+                    continue;
+                }
+                if is_cursor_up_event(key) {
+                    app.scroll_shell_output_up();
+                    continue;
+                }
+                if is_cursor_down_event(key) {
+                    app.scroll_shell_output_down();
+                    continue;
+                }
+                if is_cursor_left_event(key) {
+                    app.scroll_shell_output_left();
+                    continue;
+                }
+                if is_cursor_right_event(key) {
+                    app.scroll_shell_output_right();
+                    continue;
+                }
+                if is_page_up_event(key) {
+                    app.page_up_shell_output();
+                    continue;
+                }
+                if is_page_down_event(key) {
+                    app.page_down_shell_output();
+                    continue;
+                }
+                if is_home_event(key) {
+                    app.home_shell_output();
+                    continue;
+                }
+                if is_end_event(key) {
+                    app.end_shell_output();
+                    continue;
+                }
+                continue;
+            }
             if app.slash_input_active() {
                 if is_slash_cancel_event(key) {
                     app.cancel_slash_input();
@@ -247,8 +295,9 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
                 }
                 continue;
             }
-            if is_quit_event(key) {
-                break;
+            if is_shell_output_toggle_event(key) {
+                app.toggle_shell_output();
+                continue;
             }
             if is_slash_activate_event(key) {
                 app.activate_slash_input();
@@ -311,7 +360,7 @@ fn draw(
     let area = frame.area();
     let (top, main, bottom, slash) = split_main(area, app.slash_input_active());
     render_top_bar(frame, top, app);
-    let preview_ratio = if app.preview_visible() {
+    let preview_ratio = if app.preview_visible() || app.shell_output_active() {
         Some(app.preview_ratio_percent())
     } else {
         None
@@ -329,19 +378,28 @@ fn draw(
         true,
     );
     if let Some(preview_area) = preview {
-        let pane_state = match preview_state {
-            PreviewState::Idle => PreviewPaneState::Empty,
-            PreviewState::Loading => PreviewPaneState::Loading,
-            PreviewState::Ready(ready) => PreviewPaneState::Ready {
-                lines: &ready.lines,
-                reason: ready.reason.clone(),
-                truncated: ready.truncated,
-            },
-            PreviewState::Failed(failed) => PreviewPaneState::Failed {
-                reason: preview_error_text(failed),
-            },
-        };
-        render_preview_pane(frame, preview_area, pane_state);
+        if app.shell_output_active() {
+            let height = preview_area.height.saturating_sub(2) as usize;
+            let width = preview_area.width.saturating_sub(2) as usize;
+            let text = app
+                .shell_output_text(height, width)
+                .unwrap_or_else(|| "shell output: empty".to_string());
+            render_shell_output_view(frame, preview_area, &text);
+        } else {
+            let pane_state = match preview_state {
+                PreviewState::Idle => PreviewPaneState::Empty,
+                PreviewState::Loading => PreviewPaneState::Loading,
+                PreviewState::Ready(ready) => PreviewPaneState::Ready {
+                    lines: &ready.lines,
+                    reason: ready.reason.clone(),
+                    truncated: ready.truncated,
+                },
+                PreviewState::Failed(failed) => PreviewPaneState::Failed {
+                    reason: preview_error_text(failed),
+                },
+            };
+            render_preview_pane(frame, preview_area, pane_state);
+        }
     }
     render_bottom_bar(
         frame,

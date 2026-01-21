@@ -70,6 +70,9 @@ fn build_bottom_bar(
                 crate::app::FeedbackStatus::Error => {
                     Style::default().fg(to_color(theme.semantic.error))
                 }
+                crate::app::FeedbackStatus::Warn => {
+                    Style::default().fg(to_color(theme.semantic.warn))
+                }
             };
             (feedback.text.clone(), style)
         };

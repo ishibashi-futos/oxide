@@ -66,7 +66,9 @@ Goal: 「プロの道具」としての堅牢性を高めます。
 - [ ] つい `Ctrl + C` でアプリを終わらせたくなるので、 `Ctrl + C` を ２回押したら終われるようにする。１回目は警告・一定時間以内 `3sec以内` に２回目が押されたら、ほんとに終了
 - [ ] `/` から始まるコマンド
   - [ ] `/cwd /path/to`: Path IntelliSence 付きの、`cd` 機能
-  - [ ] `/script {command}`: working directory 内で default shell でコマンド実行(PowerShell/Shell)
+- [ ] `/shell {command}`: working directory 内で default shell でコマンド実行(PowerShell/Shell)
+  - TODO: AllowedShell 機構は別途検討し、将来的に特定シェルを明示的に選べるようにする。
+  - TODO: AllowedShell 機構は別途検討し、将来的に特定シェルを明示的に選べるようにする。
   - [ ] `/help`: ヘルプドキュメントの閲覧
   - [ ] `/clip`: クリップボードにファイルをコピーする
   - [ ] `/clip`: クリップボードにパスをコピーする

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -5,7 +6,8 @@ use std::time::{Duration, Instant};
 use crate::config::Config;
 use crate::core::{
     ColorTheme, ColorThemeId, Entry, SlashCommand, SlashCommandError, list_entries,
-    parse_slash_command,
+    parse_slash_command, ShellCommandError, ShellCommandRequest,
+    ShellExecutionResult, ShellEvent, ShellPermission, ShellWorker,
 };
 use crate::error::{AppError, AppResult};
 use crate::tabs::{TabSummary, TabsState};
@@ -27,7 +29,7 @@ impl AppClock for SystemClock {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct App {
     pub current_dir: PathBuf,
     pub entries: Vec<Entry>,
@@ -47,6 +49,10 @@ pub struct App {
     preview_ratio_percent: u16,
     slash_history: Vec<String>,
     slash_history_index: Option<usize>,
+    shell_permission: ShellPermission,
+    shell_worker: ShellWorker,
+    shell_output_view: ShellOutputView,
+    shell_output_active: bool,
 }
 
 const SLASH_FEEDBACK_TTL: Duration = Duration::from_secs(4);
@@ -100,6 +106,10 @@ impl App {
             preview_ratio_percent: 35,
             slash_history: Vec::new(),
             slash_history_index: None,
+            shell_permission: ShellPermission::from_env(config.allow_shell),
+            shell_worker: ShellWorker::new(),
+            shell_output_view: ShellOutputView::new(),
+            shell_output_active: false,
         }
     }
 
@@ -208,6 +218,54 @@ impl App {
             return None;
         }
         Some(feedback)
+    }
+
+    pub fn shell_output_active(&self) -> bool {
+        self.shell_output_active
+    }
+
+    pub fn shell_output_text(&self, height: usize, width: usize) -> Option<String> {
+        if self.shell_output_view.is_empty() {
+            None
+        } else {
+            Some(self.shell_output_view.view_text(height, width))
+        }
+    }
+
+    pub fn page_up_shell_output(&mut self) {
+        if self.shell_output_active {
+            self.shell_output_view.page_up();
+        }
+    }
+
+    pub fn page_down_shell_output(&mut self) {
+        if self.shell_output_active {
+            self.shell_output_view.page_down();
+        }
+    }
+
+    pub fn home_shell_output(&mut self) {
+        if self.shell_output_active {
+            self.shell_output_view.home();
+        }
+    }
+
+    pub fn end_shell_output(&mut self) {
+        if self.shell_output_active {
+            self.shell_output_view.end();
+        }
+    }
+
+    pub fn scroll_shell_output_left(&mut self) {
+        if self.shell_output_active {
+            self.shell_output_view.scroll_left();
+        }
+    }
+
+    pub fn scroll_shell_output_right(&mut self) {
+        if self.shell_output_active {
+            self.shell_output_view.scroll_right();
+        }
     }
 
     pub fn preview_visible(&self) -> bool {
@@ -355,6 +413,11 @@ impl App {
                 items: color_theme_candidates(prefix),
             };
         }
+        if let Some(target) = self.shell_completion_target() {
+            return SlashCandidates {
+                items: self.shell_path_candidates(&target.prefix),
+            };
+        }
         let items = slash_command_specs()
             .iter()
             .map(|spec| spec.name)
@@ -368,6 +431,23 @@ impl App {
     }
 
     pub fn complete_slash_candidate(&mut self) {
+        if let Some(target) = self.shell_completion_target() {
+            let Some(candidate) = self.shell_path_candidates(&target.prefix).into_iter().next()
+            else {
+                return;
+            };
+            let mut buffer = String::new();
+            buffer.push_str(&self.slash_input_buffer[..target.range.start]);
+            buffer.push_str(&candidate.text);
+            if !candidate.text.ends_with('/') && !candidate.text.ends_with(std::path::MAIN_SEPARATOR)
+            {
+                buffer.push(' ');
+            }
+            buffer.push_str(&self.slash_input_buffer[target.range.end..]);
+            self.slash_input_buffer = buffer;
+            self.slash_history_index = None;
+            return;
+        }
         let Some(candidate) = self.slash_candidates().items.into_iter().next() else {
             return;
         };
@@ -404,6 +484,50 @@ impl App {
             spec.description,
             spec.options.join(", ")
         ))
+    }
+
+    pub fn toggle_shell_output(&mut self) {
+        if self.shell_output_view.is_empty() {
+            return;
+        }
+        self.shell_output_active = !self.shell_output_active;
+    }
+
+    pub fn poll_shell_events(&mut self) {
+        while let Some(event) = self.shell_worker.poll() {
+            match event {
+                ShellEvent::Stdout(line) => {
+                    self.shell_output_view.append_stdout_line(&line);
+                }
+                ShellEvent::Stderr(line) => {
+                    self.shell_output_view.append_stderr_line(&line);
+                }
+                ShellEvent::Finished(result) => {
+                    self.shell_output_view.finish(&result);
+                    self.slash_feedback = Some(self.shell_result_feedback(&result));
+                }
+                ShellEvent::Failed(error) => {
+                    self.shell_output_view.append_stderr_line(&error);
+                    self.slash_feedback = Some(self.timed_feedback(error, FeedbackStatus::Error));
+                }
+            }
+        }
+    }
+
+    pub fn close_shell_output(&mut self) {
+        self.shell_output_active = false;
+    }
+
+    pub fn scroll_shell_output_up(&mut self) {
+        if self.shell_output_active {
+            self.shell_output_view.scroll_up();
+        }
+    }
+
+    pub fn scroll_shell_output_down(&mut self) {
+        if self.shell_output_active {
+            self.shell_output_view.scroll_down();
+        }
     }
 
     pub fn append_search_char(&mut self, ch: char) {
@@ -510,6 +634,7 @@ impl App {
             "tab" => self.handle_tab_command(&command.args),
             "color" => self.handle_color_command(&command.args),
             "paste" => self.timed_feedback("paste: ready".to_string(), FeedbackStatus::Success),
+            "shell" => self.handle_shell_command(command),
             _ => self.timed_feedback(
                 format!("unknown command: {}", command.name),
                 FeedbackStatus::Error,
@@ -590,6 +715,27 @@ impl App {
         }
     }
 
+    fn handle_shell_command(&mut self, command: &SlashCommand) -> SlashFeedback {
+        if !self.shell_permission.is_allowed() {
+            return self.timed_feedback(
+                "Shell commands disabled".to_string(),
+                FeedbackStatus::Warn,
+            );
+        }
+        let raw = command
+            .raw
+            .strip_prefix("/shell")
+            .unwrap_or(command.raw.as_str())
+            .trim_start();
+        let request = match ShellCommandRequest::new(self.current_dir.clone(), raw) {
+            Ok(request) => request,
+            Err(error) => return self.shell_error_feedback(error),
+        };
+        self.shell_output_view.start(&request);
+        self.shell_worker.request(request);
+        self.timed_feedback("shell: running".to_string(), FeedbackStatus::Success)
+    }
+
     fn tab_list_feedback(&self) -> SlashFeedback {
         let summaries = self.tabs.summaries();
         SlashFeedback {
@@ -619,6 +765,72 @@ impl App {
         None
     }
 
+    fn shell_completion_target(&self) -> Option<ShellCompletionTarget> {
+        let input = self.slash_input_buffer.as_str();
+        let after = input.strip_prefix("/shell")?;
+        if after.is_empty() {
+            return None;
+        }
+        if !after.starts_with(char::is_whitespace) {
+            return None;
+        }
+        let has_trailing_space = input.chars().last().map(|ch| ch.is_whitespace()).unwrap_or(false);
+        let (start, end) = if has_trailing_space {
+            (input.len(), input.len())
+        } else {
+            let trimmed = input.trim_end();
+            let end = trimmed.len();
+            let start = trimmed
+                .char_indices()
+                .rev()
+                .find(|(_, ch)| ch.is_whitespace())
+                .map(|(idx, ch)| idx + ch.len_utf8())
+                .unwrap_or(0);
+            (start, end)
+        };
+        let prefix = if start == end {
+            String::new()
+        } else {
+            input[start..end].to_string()
+        };
+        Some(ShellCompletionTarget {
+            range: start..end,
+            prefix,
+        })
+    }
+
+    fn shell_path_candidates(&self, prefix: &str) -> Vec<SlashCandidate> {
+        if prefix.contains('"') || prefix.contains('\'') {
+            return Vec::new();
+        }
+        let (dir_prefix, name_prefix) = split_path_prefix(prefix);
+        let base_dir = if Path::new(prefix).is_absolute() {
+            PathBuf::from(&dir_prefix)
+        } else {
+            self.current_dir.join(&dir_prefix)
+        };
+        let entries = match list_entries(&base_dir, self.show_hidden) {
+            Ok(entries) => entries,
+            Err(_) => return Vec::new(),
+        };
+        entries
+            .into_iter()
+            .filter(|entry| entry.name.starts_with(&name_prefix))
+            .map(|entry| {
+                let mut text = String::new();
+                text.push_str(&dir_prefix);
+                text.push_str(&entry.name);
+                if entry.is_dir {
+                    text.push('/');
+                }
+                SlashCandidate {
+                    text,
+                    description: None,
+                }
+            })
+            .collect()
+    }
+
     fn timed_feedback(&self, text: String, status: FeedbackStatus) -> SlashFeedback {
         timed_feedback_with(self.clock.as_ref(), text, status)
     }
@@ -632,6 +844,18 @@ impl App {
 
     fn tab_error_feedback(&self, error: AppError) -> SlashFeedback {
         self.timed_feedback(format!("tab: {}", error), FeedbackStatus::Error)
+    }
+
+    fn shell_error_feedback(&self, error: ShellCommandError) -> SlashFeedback {
+        self.timed_feedback(error.to_string(), FeedbackStatus::Error)
+    }
+
+    fn shell_result_feedback(&self, result: &ShellExecutionResult) -> SlashFeedback {
+        let status = match result.status_code {
+            Some(0) => FeedbackStatus::Success,
+            _ => FeedbackStatus::Error,
+        };
+        self.timed_feedback(format_shell_result(result), status)
     }
 
     fn announce_active_tab_color(&mut self) {
@@ -652,6 +876,12 @@ pub struct TabColorChanged {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandContext {
     Tab(u64),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellCompletionTarget {
+    range: std::ops::Range<usize>,
+    prefix: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -683,6 +913,7 @@ impl SlashFeedback {
 pub enum FeedbackStatus {
     Success,
     Error,
+    Warn,
 }
 
 fn format_slash_error(error: SlashCommandError) -> &'static str {
@@ -722,6 +953,11 @@ fn slash_command_specs() -> &'static [SlashCommandSpec] {
             name: "preview",
             description: "toggle preview",
             options: &["show", "hide"],
+        },
+        SlashCommandSpec {
+            name: "shell",
+            description: "run shell command",
+            options: &["<command>"],
         },
         SlashCommandSpec {
             name: "color",
@@ -768,6 +1004,264 @@ fn color_theme_candidates(prefix: &str) -> Vec<SlashCandidate> {
 
 fn hex_color(color: crate::core::ColorRgb) -> String {
     format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b)
+}
+
+fn split_path_prefix(raw: &str) -> (String, String) {
+    if raw.is_empty() {
+        return (String::new(), String::new());
+    }
+    let separator = std::path::MAIN_SEPARATOR;
+    if raw.ends_with('/') || raw.ends_with(separator) {
+        return (raw.to_string(), String::new());
+    }
+    if let Some(index) = raw.rfind(|ch| ch == '/' || ch == separator) {
+        let (dir, file) = raw.split_at(index + 1);
+        return (dir.to_string(), file.to_string());
+    }
+    (String::new(), raw.to_string())
+}
+
+#[derive(Debug, Clone)]
+struct ShellOutputView {
+    lines: VecDeque<String>,
+    total_bytes: usize,
+    max_bytes: usize,
+    max_lines: usize,
+    scroll_offset: usize,
+    horiz_offset: usize,
+    stdout_opened: bool,
+    stderr_opened: bool,
+}
+
+impl ShellOutputView {
+    fn new() -> Self {
+        Self {
+            lines: VecDeque::new(),
+            total_bytes: 0,
+            max_bytes: 2_097_152,
+            max_lines: 4_000,
+            scroll_offset: 0,
+            horiz_offset: 0,
+            stdout_opened: false,
+            stderr_opened: false,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+
+    #[cfg(test)]
+    fn reset(&mut self, request: &ShellCommandRequest, result: &ShellExecutionResult) {
+        self.lines.clear();
+        self.total_bytes = 0;
+        self.scroll_offset = 0;
+        self.horiz_offset = 0;
+        self.stdout_opened = false;
+        self.stderr_opened = false;
+        self.push_line(format!("$ {}", request.raw_command));
+        self.push_line(format!("cwd: {}", request.working_dir.display()));
+        let exit = result.status_code.unwrap_or(-1);
+        self.push_line(format!(
+            "exit: {} duration: {}ms timestamp: {}",
+            exit, result.duration_ms, result.timestamp_ms
+        ));
+        if !result.stdout.trim().is_empty() {
+            self.open_stdout();
+            self.push_text(&result.stdout);
+        }
+        if !result.stderr.trim().is_empty() {
+            self.open_stderr();
+            self.push_text(&result.stderr);
+        }
+        self.shrink_to_limits();
+    }
+
+    fn start(&mut self, request: &ShellCommandRequest) {
+        self.lines.clear();
+        self.total_bytes = 0;
+        self.scroll_offset = 0;
+        self.horiz_offset = 0;
+        self.stdout_opened = false;
+        self.stderr_opened = false;
+        self.push_line(format!("$ {}", request.raw_command));
+        self.push_line(format!("cwd: {}", request.working_dir.display()));
+        self.push_line("status: running".to_string());
+    }
+
+    fn append_stdout_line(&mut self, line: &str) {
+        self.open_stdout();
+        self.push_line(line.to_string());
+    }
+
+    fn append_stderr_line(&mut self, line: &str) {
+        self.open_stderr();
+        self.push_line(line.to_string());
+    }
+
+    fn finish(&mut self, result: &ShellExecutionResult) {
+        let exit = result.status_code.unwrap_or(-1);
+        self.push_line(format!(
+            "exit: {} duration: {}ms timestamp: {}",
+            exit, result.duration_ms, result.timestamp_ms
+        ));
+        if !self.stdout_opened && !result.stdout.trim().is_empty() {
+            self.open_stdout();
+            self.push_text(&result.stdout);
+        }
+        if !self.stderr_opened && !result.stderr.trim().is_empty() {
+            self.open_stderr();
+            self.push_text(&result.stderr);
+        }
+        self.shrink_to_limits();
+    }
+
+    fn scroll_up(&mut self) {
+        if self.scroll_offset > 0 {
+            self.scroll_offset -= 1;
+        }
+    }
+
+    fn scroll_down(&mut self) {
+        let max_offset = self.lines.len().saturating_sub(1);
+        if self.scroll_offset < max_offset {
+            self.scroll_offset += 1;
+        }
+    }
+
+    fn scroll_left(&mut self) {
+        self.horiz_offset = self.horiz_offset.saturating_sub(self.horiz_step());
+    }
+
+    fn scroll_right(&mut self) {
+        let max_offset = self.max_horiz_offset();
+        let next = self.horiz_offset + self.horiz_step();
+        self.horiz_offset = next.min(max_offset);
+    }
+
+    fn page_up(&mut self) {
+        let step = self.page_step();
+        self.scroll_offset = self.scroll_offset.saturating_sub(step);
+    }
+
+    fn page_down(&mut self) {
+        let step = self.page_step();
+        let max_offset = self.lines.len().saturating_sub(1);
+        self.scroll_offset = (self.scroll_offset + step).min(max_offset);
+    }
+
+    fn home(&mut self) {
+        self.scroll_offset = 0;
+    }
+
+    fn end(&mut self) {
+        self.scroll_offset = self.lines.len().saturating_sub(1);
+    }
+
+    fn view_text(&self, height: usize, width: usize) -> String {
+        if self.lines.is_empty() {
+            return "shell output: empty".to_string();
+        }
+        let start = self.scroll_offset.min(self.lines.len());
+        let end = (start + height).min(self.lines.len());
+        self.lines
+            .iter()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .map(|line| slice_line(line, self.horiz_offset, width))
+            .collect::<Vec<String>>()
+            .join("\n")
+    }
+
+    fn push_text(&mut self, text: &str) {
+        for line in text.lines() {
+            self.push_line(line.to_string());
+        }
+    }
+
+    fn push_line(&mut self, line: String) {
+        self.total_bytes += line.as_bytes().len() + 1;
+        self.lines.push_back(line);
+        self.shrink_to_limits();
+    }
+
+    fn open_stdout(&mut self) {
+        if !self.stdout_opened {
+            self.push_line("stdout:".to_string());
+            self.stdout_opened = true;
+        }
+    }
+
+    fn open_stderr(&mut self) {
+        if !self.stderr_opened {
+            self.push_line("stderr:".to_string());
+            self.stderr_opened = true;
+        }
+    }
+
+    fn shrink_to_limits(&mut self) {
+        while self.lines.len() > self.max_lines || self.total_bytes > self.max_bytes {
+            if let Some(line) = self.lines.pop_front() {
+                self.total_bytes = self.total_bytes.saturating_sub(line.as_bytes().len() + 1);
+            } else {
+                break;
+            }
+        }
+        if self.scroll_offset >= self.lines.len() {
+            self.scroll_offset = self.lines.len().saturating_sub(1);
+        }
+        if self.horiz_offset > self.max_horiz_offset() {
+            self.horiz_offset = self.max_horiz_offset();
+        }
+    }
+
+    fn page_step(&self) -> usize {
+        20
+    }
+
+    fn horiz_step(&self) -> usize {
+        4
+    }
+
+    fn max_horiz_offset(&self) -> usize {
+        self.lines
+            .iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+fn slice_line(line: &str, offset: usize, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    line.chars().skip(offset).take(width).collect()
+}
+
+fn format_shell_result(result: &ShellExecutionResult) -> String {
+    let exit = result.status_code.unwrap_or(-1);
+    let mut parts = vec![format!("shell: exit={exit}"), format!("{}ms", result.duration_ms)];
+    if let Some(stdout) = compact_output(&result.stdout, 80) {
+        parts.push(format!("stdout={stdout}"));
+    }
+    if let Some(stderr) = compact_output(&result.stderr, 80) {
+        parts.push(format!("stderr={stderr}"));
+    }
+    parts.join(" ")
+}
+
+fn compact_output(output: &str, max_len: usize) -> Option<String> {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut flat = trimmed.replace('\n', "\\n");
+    if flat.len() > max_len {
+        flat.truncate(max_len);
+        flat.push_str("...");
+    }
+    Some(flat)
 }
 
 #[cfg(test)]
@@ -870,6 +1364,7 @@ mod slash_tests {
         let feedback = app.handle_slash_command(&SlashCommand {
             name: "preview".to_string(),
             args: Vec::new(),
+            raw: "/preview".to_string(),
         });
 
         assert!(!app.preview_visible());
@@ -886,6 +1381,7 @@ mod slash_tests {
         let feedback = app.handle_slash_command(&SlashCommand {
             name: "preview".to_string(),
             args: vec!["show".to_string()],
+            raw: "/preview show".to_string(),
         });
 
         assert!(app.preview_visible());
@@ -902,6 +1398,7 @@ mod slash_tests {
         let feedback = app.handle_slash_command(&SlashCommand {
             name: "preview".to_string(),
             args: vec!["hide".to_string()],
+            raw: "/preview hide".to_string(),
         });
 
         assert!(!app.preview_visible());
@@ -992,12 +1489,91 @@ mod slash_tests {
     }
 
     #[test]
+    fn shell_candidates_target_last_token_only() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(temp_dir.path().join("build.sh"), "echo").unwrap();
+        std::fs::create_dir(temp_dir.path().join("dir")).unwrap();
+        std::fs::write(temp_dir.path().join("diary.txt"), "note").unwrap();
+
+        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        app.slash_input_active = true;
+        app.slash_input_buffer = "/shell ./build.sh ./di".to_string();
+
+        let candidates = app.slash_candidates();
+        let texts = candidates
+            .items
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect::<Vec<String>>();
+
+        assert_eq!(
+            texts,
+            vec!["./diary.txt".to_string(), "./dir/".to_string()]
+        );
+    }
+
+    #[test]
+    fn shell_completion_replaces_last_token_and_appends_space() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp_dir.path().join("dir")).unwrap();
+        std::fs::write(temp_dir.path().join("diary.txt"), "note").unwrap();
+
+        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        app.slash_input_active = true;
+        app.slash_input_buffer = "/shell ./build.sh ./di".to_string();
+
+        app.complete_slash_candidate();
+
+        assert_eq!(app.slash_input_text(), "/shell ./build.sh ./diary.txt ");
+    }
+
+    #[test]
+    fn shell_completion_skips_space_for_directory() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp_dir.path().join("src")).unwrap();
+
+        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        app.slash_input_active = true;
+        app.slash_input_buffer = "/shell ./sr".to_string();
+
+        app.complete_slash_candidate();
+
+        assert_eq!(app.slash_input_text(), "/shell ./src/");
+    }
+
+    #[test]
+    fn shell_completion_keeps_existing_shell_output() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(temp_dir.path().join("diary.txt"), "note").unwrap();
+        let request =
+            ShellCommandRequest::new(temp_dir.path().to_path_buf(), "echo hi").unwrap();
+        let result = ShellExecutionResult {
+            status_code: Some(0),
+            stdout: "ok".to_string(),
+            stderr: String::new(),
+            duration_ms: 12,
+            timestamp_ms: 1,
+        };
+
+        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        app.shell_output_view.reset(&request, &result);
+        let before = app.shell_output_view.lines.clone();
+        app.slash_input_active = true;
+        app.slash_input_buffer = "/shell ./di".to_string();
+
+        app.complete_slash_candidate();
+
+        assert_eq!(app.shell_output_view.lines, before);
+    }
+
+    #[test]
     fn color_command_sets_theme_for_active_tab() {
         let mut app = empty_app();
 
         let feedback = app.handle_slash_command(&SlashCommand {
             name: "color".to_string(),
             args: vec!["Glacier".to_string(), "Coast".to_string()],
+            raw: "/color Glacier Coast".to_string(),
         });
 
         assert_eq!(feedback.status, FeedbackStatus::Success);
@@ -1012,6 +1588,7 @@ mod slash_tests {
         let feedback = app.handle_slash_command(&SlashCommand {
             name: "color".to_string(),
             args: vec!["Unknown".to_string()],
+            raw: "/color Unknown".to_string(),
         });
 
         assert_eq!(feedback.status, FeedbackStatus::Error);
@@ -1115,12 +1692,90 @@ mod slash_tests {
     }
 
     #[test]
+    fn shell_command_warns_when_disabled() {
+        let mut app = empty_app();
+        app.shell_permission = ShellPermission::new(false, false);
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "shell".to_string(),
+            args: vec!["echo".to_string()],
+            raw: "/shell echo".to_string(),
+        });
+
+        assert_eq!(feedback.status, FeedbackStatus::Warn);
+        assert!(feedback.text.contains("disabled"));
+    }
+
+    #[test]
+    fn shell_output_view_resets_and_scrolls() {
+        let request = ShellCommandRequest::new(PathBuf::from("."), "echo hi").unwrap();
+        let result = ShellExecutionResult {
+            status_code: Some(0),
+            stdout: "line1\nline2".to_string(),
+            stderr: String::new(),
+            duration_ms: 5,
+            timestamp_ms: 10,
+        };
+        let mut view = ShellOutputView::new();
+
+        view.reset(&request, &result);
+        assert!(!view.is_empty());
+
+        let text = view.view_text(1, 80);
+        assert!(text.contains("$ echo hi"));
+
+        view.scroll_down();
+        let scrolled = view.view_text(1, 80);
+        assert_ne!(text, scrolled);
+    }
+
+    #[test]
+    fn shell_output_view_pages_and_jumps() {
+        let mut view = ShellOutputView::new();
+        view.max_lines = 100;
+        for i in 0..50 {
+            view.push_line(format!("line {i}"));
+        }
+
+        view.page_down();
+        let after_page_down = view.scroll_offset;
+        assert!(after_page_down > 0);
+
+        view.page_up();
+        assert!(view.scroll_offset < after_page_down);
+
+        view.end();
+        assert_eq!(view.scroll_offset, view.lines.len().saturating_sub(1));
+
+        view.home();
+        assert_eq!(view.scroll_offset, 0);
+    }
+
+    #[test]
+    fn shell_output_view_scrolls_horizontally() {
+        let mut view = ShellOutputView::new();
+        view.push_line("abcdefghij".to_string());
+
+        let first = view.view_text(1, 4);
+        assert_eq!(first, "abcd");
+
+        view.scroll_right();
+        let scrolled = view.view_text(1, 4);
+        assert_eq!(scrolled, "efgh");
+
+        view.scroll_left();
+        let back = view.view_text(1, 4);
+        assert_eq!(back, "abcd");
+    }
+
+    #[test]
     fn tab_command_lists_tabs() {
         let (_temp_dir, mut app, dir_one, dir_two) = app_with_two_tabs();
 
         let feedback = app.handle_slash_command(&SlashCommand {
             name: "tab".to_string(),
             args: Vec::new(),
+            raw: "/tab".to_string(),
         });
 
         assert_eq!(feedback.status, FeedbackStatus::Success);
@@ -1148,6 +1803,7 @@ mod slash_tests {
         let feedback = app.handle_slash_command(&SlashCommand {
             name: "tab".to_string(),
             args: vec!["1".to_string()],
+            raw: "/tab 1".to_string(),
         });
 
         assert_eq!(feedback.status, FeedbackStatus::Success);
@@ -1164,10 +1820,12 @@ mod slash_tests {
         let _ = app.handle_slash_command(&SlashCommand {
             name: "preview".to_string(),
             args: Vec::new(),
+            raw: "/preview".to_string(),
         });
         let _ = app.handle_slash_command(&SlashCommand {
             name: "preview".to_string(),
             args: Vec::new(),
+            raw: "/preview".to_string(),
         });
 
         assert_eq!(app.preview_ratio_percent(), 32);

@@ -4,8 +4,16 @@
 
 - Always ask for consent and provide `cargo add` commands before adding dependencies. Use latest versions unless justified.
 - Explicitly justify any changes to `features`, `edition`, or `toolchain`.
-- When updating documentation, prioritize integrating changes into existing sections to prevent fragmentation and improve maintainability.
 - Execute tasks reliably and sequentially; do not parallelize them.
+
+## DOCUMENTATION
+
+- When updating documentation, adhere to these maintenance principles:
+  - Progressive Disclosure: Refactor structure to reveal information incrementally; keep the entry point minimal and link to details.
+  - Identify Essentials: Separate "always-relevant" core intent from "task-specific" details. Use concise, actionable statements.
+  - Analyze & Organize: Identify contradictions before merging. Group instructions into logical categories to prevent fragmentation.
+  - Cleanup (Flag for Deletion): Move redundant, obvious, or non-actionable instructions to a `## Flagged for Deletion` section for final review.
+- Clarity at a Glance: Avoid parentheses or supplemental fluff. Prioritize brevity and high-signal data to ensure maintainability.
 
 ## DEVELOPMENT WORKFLOW
 
@@ -53,7 +61,7 @@
 
 ## ERROR HANDLING & SAFETY
 
-- **No `unwrap()` or `expect()` in production code.** Handle all errors gracefully using `Result` and propagation (`?`).
+- No `unwrap()` or `expect()` in production code. Handle all errors gracefully using `Result` and propagation (`?`).
 - `unwrap()` is permitted ONLY in test code (`#[cfg(test)]`).
 - Use custom Error types (e.g., `thiserror`) to provide meaningful context for failures.
 
