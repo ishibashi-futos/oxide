@@ -6,6 +6,7 @@
 - Explicitly justify any changes to `features`, `edition`, or `toolchain`.
 - When updating documentation, prioritize integrating changes into existing sections to prevent fragmentation and improve maintainability.
 - Execute tasks reliably and sequentially; do not parallelize them.
+- For documentation headings, avoid parentheses or supplemental text; choose concise titles that clearly convey intent at a glance (e.g., use “Basic Requirements” rather than “Basic Requirements (First Things to Cover)”).
 
 ## DEVELOPMENT WORKFLOW
 
