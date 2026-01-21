@@ -69,6 +69,9 @@ Goal: 「プロの道具」としての堅牢性を高めます。
 - [ ] `/shell {command}`: working directory 内で default shell でコマンド実行(PowerShell/Shell)
   - TODO: AllowedShell 機構は別途検討し、将来的に特定シェルを明示的に選べるようにする。
   - TODO: AllowedShell 機構は別途検討し、将来的に特定シェルを明示的に選べるようにする。
+  - 既知事項: Windows の UNC パス (`\\server\share` / `\\?\UNC\server\share`) の比較が未対応。  
+     
+    共有フォルダを使う環境では `PathEscapesWorkingDir` の誤検知が起きる可能性がある。
   - [ ] `/help`: ヘルプドキュメントの閲覧
   - [ ] `/clip`: クリップボードにファイルをコピーする
   - [ ] `/clip`: クリップボードにパスをコピーする
