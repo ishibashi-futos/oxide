@@ -1,9 +1,26 @@
 use std::path::PathBuf;
 
+use crate::core::ColorThemeId;
+
 #[derive(Debug, Clone)]
 pub(crate) struct TabsState {
-    tabs: Vec<PathBuf>,
+    tabs: Vec<Tab>,
     active: usize,
+    next_id: u64,
+    rotation: ThemeRotation,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Tab {
+    id: u64,
+    path: PathBuf,
+    theme_id: ColorThemeId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ColorPreference {
+    pub(crate) tab_id: u64,
+    pub(crate) theme_id: ColorThemeId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,11 +30,26 @@ pub(crate) struct TabSummary {
     pub(crate) active: bool,
 }
 
+#[derive(Debug, Clone)]
+struct ThemeRotation {
+    order: Vec<ColorThemeId>,
+    index: usize,
+}
+
 impl TabsState {
-    pub(crate) fn new(current_dir: PathBuf) -> Self {
+    pub(crate) fn new(current_dir: PathBuf, default_theme: Option<ColorThemeId>) -> Self {
+        let start = default_theme.unwrap_or(ColorThemeId::GlacierCoast);
+        let mut rotation = ThemeRotation::new(start);
+        let theme_id = rotation.next();
         Self {
-            tabs: vec![current_dir],
+            tabs: vec![Tab {
+                id: 1,
+                path: current_dir,
+                theme_id,
+            }],
             active: 0,
+            next_id: 2,
+            rotation,
         }
     }
 
@@ -31,13 +63,19 @@ impl TabsState {
 
     pub(crate) fn store_active(&mut self, current_dir: &PathBuf) {
         if let Some(slot) = self.tabs.get_mut(self.active) {
-            *slot = current_dir.clone();
+            slot.path = current_dir.clone();
         }
     }
 
     pub(crate) fn push_new(&mut self, current_dir: &PathBuf) {
         self.store_active(current_dir);
-        self.tabs.push(current_dir.clone());
+        let theme_id = self.rotation.next();
+        self.tabs.push(Tab {
+            id: self.next_id,
+            path: current_dir.clone(),
+            theme_id,
+        });
+        self.next_id = self.next_id.saturating_add(1);
         self.active = self.tabs.len().saturating_sub(1);
     }
 
@@ -65,19 +103,78 @@ impl TabsState {
         }
         self.store_active(current_dir);
         self.active = index;
-        Some(self.tabs[index].clone())
+        Some(self.tabs[index].path.clone())
     }
 
     pub(crate) fn summaries(&self) -> Vec<TabSummary> {
         self.tabs
             .iter()
             .enumerate()
-            .map(|(index, path)| TabSummary {
+            .map(|(index, tab)| TabSummary {
                 number: index + 1,
-                path: path.clone(),
+                path: tab.path.clone(),
                 active: index == self.active,
             })
             .collect()
+    }
+
+    pub(crate) fn active_tab_id(&self) -> u64 {
+        self.tabs
+            .get(self.active)
+            .map(|tab| tab.id)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn active_theme_id(&self) -> ColorThemeId {
+        self.tabs
+            .get(self.active)
+            .map(|tab| tab.theme_id)
+            .unwrap_or(ColorThemeId::GlacierCoast)
+    }
+
+    pub(crate) fn set_active_theme(&mut self, theme_id: ColorThemeId) -> ColorPreference {
+        let tab = self
+            .tabs
+            .get_mut(self.active)
+            .expect("active tab exists");
+        tab.set_theme(theme_id);
+        tab.color_preference()
+    }
+}
+
+impl Tab {
+    pub(crate) fn set_theme(&mut self, theme_id: ColorThemeId) {
+        self.theme_id = theme_id;
+    }
+
+    #[allow(dead_code)]
+    // TODO: タブ一覧やデバッグ表示で参照予定のため保留。
+    pub(crate) fn current_theme(&self) -> ColorThemeId {
+        self.theme_id
+    }
+
+    pub(crate) fn color_preference(&self) -> ColorPreference {
+        ColorPreference {
+            tab_id: self.id,
+            theme_id: self.theme_id,
+        }
+    }
+}
+
+impl ThemeRotation {
+    fn new(start: ColorThemeId) -> Self {
+        let order = ColorThemeId::all().to_vec();
+        let index = order
+            .iter()
+            .position(|id| *id == start)
+            .unwrap_or(0);
+        Self { order, index }
+    }
+
+    fn next(&mut self) -> ColorThemeId {
+        let theme = self.order[self.index];
+        self.index = (self.index + 1) % self.order.len();
+        theme
     }
 }
 
@@ -89,14 +186,14 @@ mod tests {
     fn push_new_adds_tab_and_sets_active() {
         let dir_one = PathBuf::from("/one");
         let dir_two = PathBuf::from("/two");
-        let mut tabs = TabsState::new(dir_one);
+        let mut tabs = TabsState::new(dir_one, None);
 
         tabs.push_new(&dir_two);
 
         assert_eq!(tabs.count(), 2);
         assert_eq!(tabs.active_number(), 2);
-        assert_eq!(tabs.tabs[0], dir_two);
-        assert_eq!(tabs.tabs[1], dir_two);
+        assert_eq!(tabs.tabs[0].path, dir_two);
+        assert_eq!(tabs.tabs[1].path, dir_two);
     }
 
     #[test]
@@ -105,15 +202,28 @@ mod tests {
         let dir_two = PathBuf::from("/two");
         let dir_three = PathBuf::from("/three");
         let mut tabs = TabsState {
-            tabs: vec![dir_one, dir_two.clone()],
+            tabs: vec![
+                Tab {
+                    id: 1,
+                    path: dir_one,
+                    theme_id: ColorThemeId::GlacierCoast,
+                },
+                Tab {
+                    id: 2,
+                    path: dir_two.clone(),
+                    theme_id: ColorThemeId::NightHarbor,
+                },
+            ],
             active: 0,
+            next_id: 3,
+            rotation: ThemeRotation::new(ColorThemeId::GlacierCoast),
         };
 
         let next = tabs.switch_to(1, &dir_three);
 
         assert_eq!(next, Some(dir_two));
         assert_eq!(tabs.active_number(), 2);
-        assert_eq!(tabs.tabs[0], dir_three);
+        assert_eq!(tabs.tabs[0].path, dir_three);
     }
 
     #[test]
@@ -121,8 +231,21 @@ mod tests {
         let dir_one = PathBuf::from("/one");
         let dir_two = PathBuf::from("/two");
         let tabs = TabsState {
-            tabs: vec![dir_one.clone(), dir_two.clone()],
+            tabs: vec![
+                Tab {
+                    id: 1,
+                    path: dir_one.clone(),
+                    theme_id: ColorThemeId::GlacierCoast,
+                },
+                Tab {
+                    id: 2,
+                    path: dir_two.clone(),
+                    theme_id: ColorThemeId::NightHarbor,
+                },
+            ],
             active: 1,
+            next_id: 3,
+            rotation: ThemeRotation::new(ColorThemeId::GlacierCoast),
         };
 
         let summaries = tabs.summaries();
@@ -141,6 +264,26 @@ mod tests {
                     active: true,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn tab_theme_can_be_set_and_read() {
+        let mut tab = Tab {
+            id: 1,
+            path: PathBuf::from("/one"),
+            theme_id: ColorThemeId::GlacierCoast,
+        };
+
+        tab.set_theme(ColorThemeId::DeepForest);
+
+        assert_eq!(tab.current_theme(), ColorThemeId::DeepForest);
+        assert_eq!(
+            tab.color_preference(),
+            ColorPreference {
+                tab_id: 1,
+                theme_id: ColorThemeId::DeepForest
+            }
         );
     }
 }

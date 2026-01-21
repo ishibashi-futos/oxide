@@ -5,6 +5,7 @@ mod main_pane;
 mod metadata_worker;
 mod preview_pane;
 mod preview_worker;
+mod theme;
 mod top_bar;
 
 use std::io::{self, Stdout};
@@ -19,7 +20,7 @@ use ratatui::{Frame, Terminal, backend::CrosstermBackend};
 use std::time::Duration;
 
 use crate::{
-    app::{App, EntryOpener},
+    app::{App, EntryOpener, TabColorChanged},
     error::AppResult,
 };
 
@@ -62,8 +63,12 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
     let mut preview_state = PreviewState::Idle;
     let mut preview_request_id: u64 = 0;
     let mut active_preview_id: Option<u64> = None;
+    let mut theme_state = ThemeState::new(app.active_theme());
 
     loop {
+        if let Some(event) = app.take_tab_color_changed() {
+            theme_state.apply(event);
+        }
         let current_path = app.selected_entry_path();
         if metadata_cache_dir.as_ref() != Some(&app.current_dir) {
             metadata_snapshot.clear();
@@ -204,6 +209,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
                 metadata_status,
                 git_display.as_deref(),
                 &preview_state,
+                &theme_state.current,
             )
         })?;
 
@@ -300,6 +306,7 @@ fn draw(
     metadata_status: Option<MetadataStatus>,
     git_display: Option<&str>,
     preview_state: &PreviewState,
+    theme: &crate::core::ColorTheme,
 ) {
     let area = frame.area();
     let (top, main, bottom, slash) = split_main(area, app.slash_input_active());
@@ -310,7 +317,7 @@ fn draw(
         None
     };
     let (left, right, preview) = split_panes(main, preview_ratio);
-    render_entry_list(frame, left, &app.parent_entries, None, "parent", "");
+    render_entry_list(frame, left, &app.parent_entries, None, "parent", "", theme, false);
     render_entry_list(
         frame,
         right,
@@ -318,6 +325,8 @@ fn draw(
         app.cursor,
         "current",
         app.search_text(),
+        theme,
+        true,
     );
     if let Some(preview_area) = preview {
         let pane_state = match preview_state {
@@ -341,6 +350,7 @@ fn draw(
         metadata_status,
         git_display,
         app.slash_feedback(),
+        theme,
     );
     if let Some(slash_area) = slash {
         let candidates = app.slash_candidates();
@@ -351,6 +361,7 @@ fn draw(
             app.slash_input_text(),
             &candidates,
             hint.as_deref(),
+            theme,
         );
     }
 }
@@ -361,6 +372,20 @@ enum PreviewState {
     Loading,
     Ready(PreviewReady),
     Failed(PreviewFailed),
+}
+
+struct ThemeState {
+    current: crate::core::ColorTheme,
+}
+
+impl ThemeState {
+    fn new(theme: crate::core::ColorTheme) -> Self {
+        Self { current: theme }
+    }
+
+    fn apply(&mut self, event: TabColorChanged) {
+        self.current = event.theme;
+    }
 }
 
 fn preview_event_id(event: &PreviewEvent) -> u64 {

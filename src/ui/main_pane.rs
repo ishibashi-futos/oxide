@@ -1,11 +1,12 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
-use crate::core::Entry;
+use crate::core::{ColorTheme, Entry};
+use crate::ui::theme::to_color;
 
 pub fn render_entry_list(
     frame: &mut Frame<'_>,
@@ -14,6 +15,8 @@ pub fn render_entry_list(
     cursor: Option<usize>,
     title: &str,
     search_text: &str,
+    theme: &ColorTheme,
+    active: bool,
 ) {
     let matches = search_matches(entries, search_text);
     let items: Vec<ListItem> = entries
@@ -22,21 +25,35 @@ pub fn render_entry_list(
         .map(|(index, entry)| {
             let mut item = ListItem::new(display_name(entry));
             if matches.len() > 1 && matches.iter().skip(1).any(|&hit| hit == index) {
-                item = item.style(secondary_match_style());
+                item = item.style(secondary_match_style(theme));
             }
             item
         })
         .collect();
 
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let border_color = if active {
+        to_color(theme.base)
+    } else {
+        to_color(theme.grayscale.low)
+    };
+    let text_style = if active {
+        Style::default()
+    } else {
+        Style::default().fg(to_color(theme.grayscale.high))
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .style(Style::default().fg(border_color));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let (list_area, footer_area) = split_list_and_footer(inner, !search_text.is_empty());
     if list_area.height > 0 {
         let list = List::new(items)
-            .highlight_style(highlight_style(!search_text.is_empty()))
-            .highlight_symbol(highlight_symbol(search_text));
+            .highlight_style(highlight_style(!search_text.is_empty(), theme))
+            .highlight_symbol(highlight_symbol(search_text))
+            .style(text_style);
         let mut state = ListState::default();
         state.select(cursor);
         frame.render_stateful_widget(list, list_area, &mut state);
@@ -59,19 +76,20 @@ fn display_name(entry: &Entry) -> String {
     }
 }
 
-fn highlight_style(search_active: bool) -> Style {
+fn highlight_style(search_active: bool, theme: &ColorTheme) -> Style {
+    let style = Style::default()
+        .add_modifier(Modifier::REVERSED)
+        .fg(to_color(theme.primary));
     if search_active {
-        Style::default()
-            .add_modifier(Modifier::REVERSED)
-            .fg(Color::Blue)
+        style.add_modifier(Modifier::BOLD)
     } else {
-        Style::default().add_modifier(Modifier::REVERSED)
+        style
     }
 }
 
-fn secondary_match_style() -> Style {
+fn secondary_match_style(theme: &ColorTheme) -> Style {
     Style::default()
-        .fg(Color::LightBlue)
+        .fg(to_color(theme.secondary))
         .add_modifier(Modifier::DIM)
 }
 
@@ -155,7 +173,7 @@ fn search_matches(entries: &[Entry], search_text: &str) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::Entry;
+    use crate::core::{ColorThemeId, Entry};
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::{Terminal, layout::Rect};
@@ -176,8 +194,11 @@ mod tests {
         ];
 
         let area = Rect::new(0, 0, 20, 5);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_entry_list(frame, area, &entries, Some(0), "current", ""))
+            .draw(|frame| {
+                render_entry_list(frame, area, &entries, Some(0), "current", "", &theme, true)
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -203,8 +224,11 @@ mod tests {
         ];
 
         let area = Rect::new(0, 0, 20, 5);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_entry_list(frame, area, &entries, Some(0), "current", ""))
+            .draw(|frame| {
+                render_entry_list(frame, area, &entries, Some(0), "current", "", &theme, true)
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -223,8 +247,11 @@ mod tests {
         }];
 
         let area = Rect::new(0, 0, 20, 5);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_entry_list(frame, area, &entries, Some(0), "current", ""))
+            .draw(|frame| {
+                render_entry_list(frame, area, &entries, Some(0), "current", "", &theme, true)
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -235,11 +262,13 @@ mod tests {
 
     #[test]
     fn highlight_style_changes_when_search_active() {
-        let normal = highlight_style(false);
-        let searching = highlight_style(true);
+        let theme = ColorThemeId::GlacierCoast.theme();
+        let normal = highlight_style(false, &theme);
+        let searching = highlight_style(true, &theme);
 
         assert_ne!(normal, searching);
-        assert_eq!(searching.fg, Some(Color::Blue));
+        assert_eq!(searching.fg, Some(to_color(theme.primary)));
+        assert!(searching.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
@@ -275,16 +304,21 @@ mod tests {
         ];
 
         let area = Rect::new(0, 0, 24, 6);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_entry_list(frame, area, &entries, Some(1), "current", "b"))
+            .draw(|frame| {
+                render_entry_list(frame, area, &entries, Some(1), "current", "b", &theme, true)
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
         let style = find_cell_style(buffer, "bravo").expect("style not found");
 
-        assert_eq!(style.fg, Some(Color::LightBlue));
+        assert_eq!(style.fg, Some(to_color(theme.secondary)));
         assert!(style.add_modifier.contains(Modifier::DIM));
     }
+
+    
 
     #[test]
     fn render_search_footer_in_current_panel() {
@@ -296,8 +330,11 @@ mod tests {
         }];
 
         let area = Rect::new(0, 0, 24, 6);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_entry_list(frame, area, &entries, Some(0), "current", "al"))
+            .draw(|frame| {
+                render_entry_list(frame, area, &entries, Some(0), "current", "al", &theme, true)
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -315,8 +352,11 @@ mod tests {
         }];
 
         let area = Rect::new(0, 0, 24, 6);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_entry_list(frame, area, &entries, Some(0), "current", "al"))
+            .draw(|frame| {
+                render_entry_list(frame, area, &entries, Some(0), "current", "al", &theme, true)
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();

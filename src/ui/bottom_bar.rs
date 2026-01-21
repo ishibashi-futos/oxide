@@ -2,13 +2,16 @@ use chrono::{DateTime, Local};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::{Style},
+    text::{Line, Span},
     widgets::Paragraph,
 };
 
-use crate::app::SlashFeedback;
+use crate::app::{SlashCandidates, SlashFeedback};
+use crate::core::ColorTheme;
 use crate::core::{EntryMetadata, MetadataStatus};
 use crate::tabs::TabSummary;
+use crate::ui::theme::to_color;
 
 pub fn render_bottom_bar(
     frame: &mut Frame<'_>,
@@ -17,6 +20,7 @@ pub fn render_bottom_bar(
     metadata_status: Option<MetadataStatus>,
     git: Option<&str>,
     feedback: Option<&SlashFeedback>,
+    theme: &ColorTheme,
 ) {
     let bar = Paragraph::new(build_bottom_bar(
         metadata,
@@ -24,19 +28,21 @@ pub fn render_bottom_bar(
         git,
         feedback,
         area.width,
+        theme,
     ));
-    frame.render_widget(bar, area);
+    frame.render_widget(bar.style(Style::default().bg(to_color(theme.grayscale.low))), area);
 }
 
 pub fn render_slash_bar(
     frame: &mut Frame<'_>,
     area: Rect,
     input: &str,
-    candidates: &[String],
+    candidates: &SlashCandidates,
     hint: Option<&str>,
+    theme: &ColorTheme,
 ) {
     let bar = Paragraph::new(build_slash_bar(input, candidates, hint, area.width))
-        .style(slash_bar_style());
+        .style(slash_bar_style(theme));
     frame.render_widget(bar, area);
 }
 
@@ -46,31 +52,55 @@ fn build_bottom_bar(
     git: Option<&str>,
     feedback: Option<&SlashFeedback>,
     width: u16,
-) -> String {
-    let metadata_line = metadata_line(metadata, metadata_status);
-    let left = if let Some(feedback) = feedback {
-        let feedback_text = if let Some(tabs) = feedback.tabs.as_deref() {
-            format_tabs(tabs)
+    theme: &ColorTheme,
+) -> Line<'static> {
+    let default_style = Style::default().fg(to_color(theme.grayscale.high));
+    let mut left_spans = Vec::new();
+    if let Some(feedback) = feedback {
+        let (text, style) = if let Some(tabs) = feedback.tabs.as_deref() {
+            (
+                format_tabs(tabs),
+                Style::default().fg(to_color(theme.secondary)),
+            )
         } else {
-            feedback.text.clone()
+            let style = match feedback.status {
+                crate::app::FeedbackStatus::Success => {
+                    Style::default().fg(to_color(theme.semantic.success))
+                }
+                crate::app::FeedbackStatus::Error => {
+                    Style::default().fg(to_color(theme.semantic.error))
+                }
+            };
+            (feedback.text.clone(), style)
         };
-        if feedback_text.is_empty() {
-            metadata_line
-        } else if metadata_line.is_empty() {
-            feedback_text
-        } else {
-            format!("{} | {}", feedback_text, metadata_line)
+        if !text.is_empty() {
+            left_spans.push(Span::styled(text, style));
         }
-    } else {
-        metadata_line
-    };
+    }
+    let (metadata_text, metadata_style) = metadata_parts(metadata, metadata_status, theme);
+    if !metadata_text.is_empty() {
+        if !left_spans.is_empty() {
+            left_spans.push(Span::styled(" | ", default_style));
+        }
+        left_spans.push(Span::styled(metadata_text, metadata_style));
+    }
+
     let git_line = git
         .map(|value| value.to_string())
         .unwrap_or_else(placeholder_git);
-    line_with_right(left, git_line, width)
+    line_with_right_spans(
+        left_spans,
+        vec![Span::styled(git_line, default_style)],
+        width,
+    )
 }
 
-fn build_slash_bar(input: &str, candidates: &[String], hint: Option<&str>, width: u16) -> String {
+fn build_slash_bar(
+    input: &str,
+    candidates: &SlashCandidates,
+    hint: Option<&str>,
+    width: u16,
+) -> String {
     let width = width as usize;
     if width == 0 {
         return String::new();
@@ -82,10 +112,20 @@ fn build_slash_bar(input: &str, candidates: &[String], hint: Option<&str>, width
             full.push(' ');
             full.push_str(hint);
         }
-    } else if !candidates.is_empty() {
+    } else if !candidates.items.is_empty() {
         full.push(' ');
         full.push(' ');
-        full.push_str(&candidates.join(" "));
+        full.push_str(
+            &candidates
+                .items
+                .iter()
+                .map(|candidate| match &candidate.description {
+                    Some(description) => format!("{}({})", candidate.text, description),
+                    None => candidate.text.clone(),
+                })
+                .collect::<Vec<String>>()
+                .join(" "),
+        );
     }
     let mut result = String::new();
     let mut used = 0usize;
@@ -103,19 +143,33 @@ fn build_slash_bar(input: &str, candidates: &[String], hint: Option<&str>, width
     result
 }
 
-fn line_with_right(left: String, right: String, width: u16) -> String {
-    let left_len = left.chars().count();
-    let right_len = right.chars().count();
+fn line_with_right_spans(
+    mut left: Vec<Span<'static>>,
+    mut right: Vec<Span<'static>>,
+    width: u16,
+) -> Line<'static> {
+    let left_len = spans_len(&left);
+    let right_len = spans_len(&right);
     let total_width = width as usize;
     if total_width <= left_len + right_len + 1 {
-        return format!("{left} {right}");
+        left.push(Span::raw(" "));
+        left.append(&mut right);
+        return Line::from(left);
     }
     let spaces = total_width - left_len - right_len;
-    format!("{left}{}{right}", " ".repeat(spaces))
+    left.push(Span::raw(" ".repeat(spaces)));
+    left.append(&mut right);
+    Line::from(left)
 }
 
-fn slash_bar_style() -> Style {
-    Style::default().bg(Color::DarkGray).fg(Color::White)
+fn spans_len(spans: &[Span<'_>]) -> usize {
+    spans.iter().map(|span| span.content.chars().count()).sum()
+}
+
+fn slash_bar_style(theme: &ColorTheme) -> Style {
+    Style::default()
+        .bg(to_color(theme.grayscale.low))
+        .fg(to_color(theme.grayscale.high))
 }
 
 fn format_tabs(tabs: &[TabSummary]) -> String {
@@ -140,14 +194,25 @@ pub fn format_metadata(metadata: &EntryMetadata) -> String {
     )
 }
 
-fn metadata_line(metadata: Option<&str>, metadata_status: Option<MetadataStatus>) -> String {
-    if let Some(status) = metadata_status {
-        return match status {
-            MetadataStatus::Loading => "metadata: loading".to_string(),
-            MetadataStatus::Error => "metadata: error".to_string(),
-        };
+fn metadata_parts(
+    metadata: Option<&str>,
+    metadata_status: Option<MetadataStatus>,
+    theme: &ColorTheme,
+) -> (String, Style) {
+    match metadata_status {
+        Some(MetadataStatus::Loading) => (
+            "metadata: loading".to_string(),
+            Style::default().fg(to_color(theme.semantic.info)),
+        ),
+        Some(MetadataStatus::Error) => (
+            "metadata: error".to_string(),
+            Style::default().fg(to_color(theme.semantic.error)),
+        ),
+        None => (
+            metadata.map(|value| value.to_string()).unwrap_or_default(),
+            Style::default().fg(to_color(theme.grayscale.high)),
+        ),
     }
-    metadata.map(|value| value.to_string()).unwrap_or_default()
 }
 
 fn placeholder_git() -> String {
@@ -177,6 +242,9 @@ fn format_size(size: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{SlashCandidate, SlashCandidates};
+    use crate::core::ColorThemeId;
+    use crate::ui::theme::to_color;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::{Terminal, layout::Rect};
@@ -227,6 +295,7 @@ mod tests {
         let backend = TestBackend::new(120, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 120, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
                 render_bottom_bar(
@@ -236,6 +305,7 @@ mod tests {
                     None,
                     Some("git: main"),
                     None,
+                    &theme,
                 )
             })
             .unwrap();
@@ -252,8 +322,9 @@ mod tests {
         let backend = TestBackend::new(30, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 30, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None, None, None))
+            .draw(|frame| render_bottom_bar(frame, area, None, None, None, None, &theme))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -280,6 +351,7 @@ mod tests {
         let backend = TestBackend::new(60, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 60, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
                 render_bottom_bar(
@@ -289,6 +361,7 @@ mod tests {
                     None,
                     Some("git: main"),
                     Some(&feedback),
+                    &theme,
                 )
             })
             .unwrap();
@@ -323,8 +396,9 @@ mod tests {
         let backend = TestBackend::new(60, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 60, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None, None, Some(&feedback)))
+            .draw(|frame| render_bottom_bar(frame, area, None, None, None, Some(&feedback), &theme))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -334,12 +408,48 @@ mod tests {
     }
 
     #[test]
+    fn tab_feedback_uses_secondary_color() {
+        let feedback = SlashFeedback {
+            text: String::new(),
+            status: crate::app::FeedbackStatus::Success,
+            tabs: Some(vec![TabSummary {
+                number: 1,
+                path: std::path::PathBuf::from("/one"),
+                active: true,
+            }]),
+            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(1),
+        };
+
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 40, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
+        terminal
+            .draw(|frame| render_bottom_bar(frame, area, None, None, None, Some(&feedback), &theme))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let style = find_cell_style(buffer, "tabs:").expect("style not found");
+        assert_eq!(style.fg, Some(to_color(theme.secondary)));
+    }
+
+    #[test]
     fn render_slash_bar_shows_input_text() {
         let backend = TestBackend::new(20, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 20, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_slash_bar(frame, area, "/preview", &[], None))
+            .draw(|frame| {
+                render_slash_bar(
+                    frame,
+                    area,
+                    "/preview",
+                    &SlashCandidates::default(),
+                    None,
+                    &theme,
+                )
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -353,9 +463,21 @@ mod tests {
         let backend = TestBackend::new(30, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 30, 1);
-        let candidates = vec!["/preview".to_string(), "/paste".to_string()];
+        let candidates = SlashCandidates {
+            items: vec![
+                SlashCandidate {
+                    text: "/preview".to_string(),
+                    description: None,
+                },
+                SlashCandidate {
+                    text: "/paste".to_string(),
+                    description: None,
+                },
+            ],
+        };
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_slash_bar(frame, area, "/p", &candidates, None))
+            .draw(|frame| render_slash_bar(frame, area, "/p", &candidates, None, &theme))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -370,14 +492,16 @@ mod tests {
         let backend = TestBackend::new(60, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 60, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
                 render_slash_bar(
                     frame,
                     area,
                     "/preview",
-                    &[],
+                    &SlashCandidates::default(),
                     Some("toggle preview | options: show, hide"),
+                    &theme,
                 )
             })
             .unwrap();
@@ -394,9 +518,18 @@ mod tests {
         let backend = TestBackend::new(40, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 40, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
-                render_bottom_bar(frame, area, None, Some(MetadataStatus::Loading), None, None)
+                render_bottom_bar(
+                    frame,
+                    area,
+                    None,
+                    Some(MetadataStatus::Loading),
+                    None,
+                    None,
+                    &theme,
+                )
             })
             .unwrap();
 
@@ -411,9 +544,18 @@ mod tests {
         let backend = TestBackend::new(40, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 40, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
-                render_bottom_bar(frame, area, None, Some(MetadataStatus::Error), None, None)
+                render_bottom_bar(
+                    frame,
+                    area,
+                    None,
+                    Some(MetadataStatus::Error),
+                    None,
+                    None,
+                    &theme,
+                )
             })
             .unwrap();
 
@@ -443,5 +585,35 @@ mod tests {
         (0..width)
             .map(|x| buffer[(x, y)].symbol().to_string())
             .collect()
+    }
+
+    fn find_cell_style(buffer: &Buffer, needle: &str) -> Option<Style> {
+        let width = buffer.area.width;
+        let height = buffer.area.height;
+        let needle_chars: Vec<char> = needle.chars().collect();
+        for y in 0..height {
+            for x in 0..width {
+                if buffer[(x, y)].symbol().chars().next()? != needle_chars[0] {
+                    continue;
+                }
+                let mut matched = true;
+                for (offset, ch) in needle_chars.iter().enumerate() {
+                    let xi = x + offset as u16;
+                    if xi >= width {
+                        matched = false;
+                        break;
+                    }
+                    let cell_ch = buffer[(xi, y)].symbol().chars().next().unwrap_or('\0');
+                    if cell_ch != *ch {
+                        matched = false;
+                        break;
+                    }
+                }
+                if matched {
+                    return Some(buffer[(x, y)].style());
+                }
+            }
+        }
+        None
     }
 }

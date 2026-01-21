@@ -3,6 +3,7 @@ mod git;
 mod metadata;
 mod preview;
 mod slash_command;
+mod theme;
 
 pub use entries::{Entry, list_entries};
 pub use git::GitWorker;
@@ -15,3 +16,4 @@ pub use preview::{
     load_preview,
 };
 pub use slash_command::{SlashCommand, SlashCommandError, parse_slash_command};
+pub use theme::{ColorRgb, ColorTheme, ColorThemeId};

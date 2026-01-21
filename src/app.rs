@@ -2,7 +2,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::core::{Entry, SlashCommand, SlashCommandError, list_entries, parse_slash_command};
+use crate::config::Config;
+use crate::core::{
+    ColorTheme, ColorThemeId, Entry, SlashCommand, SlashCommandError, list_entries,
+    parse_slash_command,
+};
 use crate::error::{AppError, AppResult};
 use crate::tabs::{TabSummary, TabsState};
 
@@ -32,6 +36,7 @@ pub struct App {
     pub show_hidden: bool,
     clock: Arc<dyn AppClock>,
     tabs: TabsState,
+    tab_color_changed: Option<TabColorChanged>,
     search_buffer: String,
     search_origin: Option<usize>,
     slash_input_active: bool,
@@ -47,6 +52,8 @@ pub struct App {
 const SLASH_FEEDBACK_TTL: Duration = Duration::from_secs(4);
 
 impl App {
+    #[allow(dead_code)]
+    // TODO: 設定注入やCLIオプション対応で使う想定のため保留。
     pub fn new(
         current_dir: PathBuf,
         entries: Vec<Entry>,
@@ -54,8 +61,26 @@ impl App {
         cursor: Option<usize>,
         show_hidden: bool,
     ) -> Self {
+        Self::new_with_config(
+            current_dir,
+            entries,
+            parent_entries,
+            cursor,
+            show_hidden,
+            Config::default(),
+        )
+    }
+
+    fn new_with_config(
+        current_dir: PathBuf,
+        entries: Vec<Entry>,
+        parent_entries: Vec<Entry>,
+        cursor: Option<usize>,
+        show_hidden: bool,
+        config: Config,
+    ) -> Self {
         let clock = Arc::new(SystemClock);
-        let tabs = TabsState::new(current_dir.clone());
+        let tabs = TabsState::new(current_dir.clone(), config.default_theme);
         Self {
             current_dir,
             entries,
@@ -64,6 +89,7 @@ impl App {
             show_hidden,
             clock,
             tabs,
+            tab_color_changed: None,
             search_buffer: String::new(),
             search_origin: None,
             slash_input_active: false,
@@ -82,12 +108,14 @@ impl App {
         let entries = list_entries(&current_dir, show_hidden)?;
         let parent_entries = list_parent_entries(&current_dir, show_hidden)?;
         let cursor = if entries.is_empty() { None } else { Some(0) };
-        Ok(Self::new(
+        let config = Config::load();
+        Ok(Self::new_with_config(
             current_dir,
             entries,
             parent_entries,
             cursor,
             show_hidden,
+            config,
         ))
     }
 
@@ -198,8 +226,17 @@ impl App {
         self.tabs.active_number()
     }
 
+    pub fn active_theme(&self) -> ColorTheme {
+        self.tabs.active_theme_id().theme()
+    }
+
+    pub fn take_tab_color_changed(&mut self) -> Option<TabColorChanged> {
+        self.tab_color_changed.take()
+    }
+
     pub fn new_tab(&mut self) -> AppResult<()> {
         self.tabs.push_new(&self.current_dir);
+        self.announce_active_tab_color();
         self.clear_search_state();
         Ok(())
     }
@@ -306,29 +343,42 @@ impl App {
         }
     }
 
-    pub fn slash_candidates(&self) -> Vec<String> {
+    pub fn slash_candidates(&self) -> SlashCandidates {
         let Some(prefix) = self.slash_command_prefix() else {
-            return Vec::new();
+            return SlashCandidates::default();
         };
         if prefix.is_empty() {
-            return Vec::new();
+            return SlashCandidates::default();
         }
-        slash_command_specs()
+        if let Some(prefix) = self.color_candidate_prefix() {
+            return SlashCandidates {
+                items: color_theme_candidates(prefix),
+            };
+        }
+        let items = slash_command_specs()
             .iter()
             .map(|spec| spec.name)
             .filter(|command| command.starts_with(prefix))
-            .map(|command| format!("/{command}"))
-            .collect()
+            .map(|command| SlashCandidate {
+                text: format!("/{command}"),
+                description: None,
+            })
+            .collect();
+        SlashCandidates { items }
     }
 
     pub fn complete_slash_candidate(&mut self) {
-        let Some(candidate) = self.slash_candidates().into_iter().next() else {
+        let Some(candidate) = self.slash_candidates().items.into_iter().next() else {
             return;
         };
-        if self.slash_input_buffer.contains(char::is_whitespace) {
-            return;
+        if self.color_candidate_prefix().is_some() {
+            self.slash_input_buffer = format!("/color {}", candidate.text);
+        } else {
+            if self.slash_input_buffer.contains(char::is_whitespace) {
+                return;
+            }
+            self.slash_input_buffer = format!("{} ", candidate.text);
         }
-        self.slash_input_buffer = format!("{candidate} ");
         self.slash_history_index = None;
     }
 
@@ -449,6 +499,7 @@ impl App {
             return Ok(());
         };
         self.set_current_dir(next_dir);
+        self.announce_active_tab_color();
         self.refresh()?;
         Ok(())
     }
@@ -457,6 +508,7 @@ impl App {
         match command.name.as_str() {
             "preview" => self.handle_preview_command(&command.args),
             "tab" => self.handle_tab_command(&command.args),
+            "color" => self.handle_color_command(&command.args),
             "paste" => self.timed_feedback("paste: ready".to_string(), FeedbackStatus::Success),
             _ => self.timed_feedback(
                 format!("unknown command: {}", command.name),
@@ -515,6 +567,29 @@ impl App {
         }
     }
 
+    fn handle_color_command(&mut self, args: &[String]) -> SlashFeedback {
+        let name = args.join(" ").trim().to_string();
+        if name.is_empty() {
+            return self.timed_feedback("color: missing theme".to_string(), FeedbackStatus::Error);
+        }
+        let Some(theme_id) = ColorThemeId::from_name(&name) else {
+            return self.timed_feedback("color: unknown theme".to_string(), FeedbackStatus::Error);
+        };
+        let context = CommandContext::Tab(self.tabs.active_tab_id());
+        let preference = self.tabs.set_active_theme(theme_id);
+        let theme = theme_id.theme();
+        self.tab_color_changed = Some(TabColorChanged {
+            tab_id: preference.tab_id,
+            theme,
+        });
+        match context {
+            CommandContext::Tab(_) => self.timed_feedback(
+                format!("theme: {}", theme.name),
+                FeedbackStatus::Success,
+            ),
+        }
+    }
+
     fn tab_list_feedback(&self) -> SlashFeedback {
         let summaries = self.tabs.summaries();
         SlashFeedback {
@@ -531,6 +606,19 @@ impl App {
         command.strip_prefix('/')
     }
 
+    fn color_candidate_prefix(&self) -> Option<&str> {
+        let trimmed = self.slash_input_buffer.trim_end();
+        let stripped = trimmed.strip_prefix('/')?;
+        let rest = stripped.strip_prefix("color")?;
+        if rest.is_empty() {
+            return Some("");
+        }
+        if rest.starts_with(char::is_whitespace) {
+            return Some(rest.trim_start());
+        }
+        None
+    }
+
     fn timed_feedback(&self, text: String, status: FeedbackStatus) -> SlashFeedback {
         timed_feedback_with(self.clock.as_ref(), text, status)
     }
@@ -545,6 +633,36 @@ impl App {
     fn tab_error_feedback(&self, error: AppError) -> SlashFeedback {
         self.timed_feedback(format!("tab: {}", error), FeedbackStatus::Error)
     }
+
+    fn announce_active_tab_color(&mut self) {
+        let theme_id = self.tabs.active_theme_id();
+        self.tab_color_changed = Some(TabColorChanged {
+            tab_id: self.tabs.active_tab_id(),
+            theme: theme_id.theme(),
+        });
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabColorChanged {
+    pub tab_id: u64,
+    pub theme: ColorTheme,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandContext {
+    Tab(u64),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashCandidate {
+    pub text: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SlashCandidates {
+    pub items: Vec<SlashCandidate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -606,6 +724,11 @@ fn slash_command_specs() -> &'static [SlashCommandSpec] {
             options: &["show", "hide"],
         },
         SlashCommandSpec {
+            name: "color",
+            description: "set tab theme",
+            options: &["<theme>"],
+        },
+        SlashCommandSpec {
             name: "paste",
             description: "paste from clipboard",
             options: &[],
@@ -615,6 +738,36 @@ fn slash_command_specs() -> &'static [SlashCommandSpec] {
 
 fn slash_command_spec(name: &str) -> Option<&'static SlashCommandSpec> {
     slash_command_specs().iter().find(|spec| spec.name == name)
+}
+
+fn color_theme_candidates(prefix: &str) -> Vec<SlashCandidate> {
+    let normalized = prefix.trim().to_ascii_lowercase();
+    ColorThemeId::all()
+        .iter()
+        .copied()
+        .map(ColorThemeId::theme)
+        .filter(|theme| {
+            if normalized.is_empty() {
+                true
+            } else {
+                theme.name.to_ascii_lowercase().starts_with(&normalized)
+            }
+        })
+        .map(|theme| SlashCandidate {
+            text: theme.name.to_string(),
+            description: Some(format!(
+                "success {} warn {} error {} info {}",
+                hex_color(theme.semantic.success),
+                hex_color(theme.semantic.warn),
+                hex_color(theme.semantic.error),
+                hex_color(theme.semantic.info)
+            )),
+        })
+        .collect()
+}
+
+fn hex_color(color: crate::core::ColorRgb) -> String {
+    format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b)
 }
 
 #[cfg(test)]
@@ -799,11 +952,13 @@ mod slash_tests {
         app.append_slash_char('p');
 
         let candidates = app.slash_candidates();
+        let texts = candidates
+            .items
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect::<Vec<String>>();
 
-        assert_eq!(
-            candidates,
-            vec!["/preview".to_string(), "/paste".to_string()]
-        );
+        assert_eq!(texts, vec!["/preview".to_string(), "/paste".to_string()]);
     }
 
     #[test]
@@ -834,6 +989,51 @@ mod slash_tests {
         app.complete_slash_candidate();
 
         assert_eq!(app.slash_input_text(), "/preview h");
+    }
+
+    #[test]
+    fn color_command_sets_theme_for_active_tab() {
+        let mut app = empty_app();
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "color".to_string(),
+            args: vec!["Glacier".to_string(), "Coast".to_string()],
+        });
+
+        assert_eq!(feedback.status, FeedbackStatus::Success);
+        assert_eq!(feedback.text, "theme: Glacier Coast");
+        assert_eq!(app.tabs.active_theme_id(), ColorThemeId::GlacierCoast);
+    }
+
+    #[test]
+    fn color_command_rejects_unknown_theme() {
+        let mut app = empty_app();
+
+        let feedback = app.handle_slash_command(&SlashCommand {
+            name: "color".to_string(),
+            args: vec!["Unknown".to_string()],
+        });
+
+        assert_eq!(feedback.status, FeedbackStatus::Error);
+        assert!(feedback.text.contains("unknown"));
+    }
+
+    #[test]
+    fn slash_candidates_show_color_themes_with_descriptions() {
+        let mut app = empty_app();
+        app.activate_slash_input();
+        app.append_slash_char('c');
+        app.append_slash_char('o');
+        app.append_slash_char('l');
+        app.append_slash_char('o');
+        app.append_slash_char('r');
+        app.append_slash_char(' ');
+
+        let candidates = app.slash_candidates();
+        let first = candidates.items.first().unwrap();
+
+        assert!(first.text.contains("Glacier"));
+        assert!(first.description.as_deref().unwrap_or("").contains("success"));
     }
 
     #[test]
