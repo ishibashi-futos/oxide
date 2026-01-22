@@ -76,7 +76,39 @@ CI/CD と連携し、ユーザーが常に最新の改善を享受できるよ�
 4. 置換・ロールバック: ファイルシステム操作のモックまたは一時ディレクトリでの統合テスト。
 5. CLI統合: `self-update`（`--yes`・`--insecure`・`--offline`）と `rollback` コマンドの引数パースとフロー確認。
 
-## TODO
+## 6. 実装状況
 
-- self-updateは単一のモジュールにまとめて、CLI層からパラメータを受け取って処理する
-- sha256sums.txtの前提をやめ、GitHub APIから取得したdigestを使用するように仕様を修正しておく
+### できていること
+- `ox self-update` の基本フローが動く。
+- `--yes` で確認をスキップできる。
+- `--tag <TAG>` で指定タグを選べる。
+- `--prerelease` を付けたときだけプレリリースを含めて探す。
+- GitHub Releases API から `assets[].digest` を使って検証する。
+- `tar.gz`/`tgz` のアーカイブを展開し、中の `ox` を置き換える。
+- 置き換え前にバックアップを作り、`rollback` で復元できる。
+
+### TODO
+
+- [ ] self-updateの処理をにまとめ、CLI層との境界を明確にする。
+- [ ] `TLS/CA` を実装する。
+- [ ] `--insecure` を実装する。
+- [ ] `--offline` を実装する。
+- [ ] Windowsの置換手順を明確にし、必要なら専用処理を入れる。
+- [ ] `--force` などの強制更新・チェックサム例外の設計を詰める。
+
+## 7. コアレイヤーの構成案
+
+- `src/self_update/` 以下にコア処理をまとめることで CLI/TUI に依存しない構造を目指す。
+- モジュール例として `config.rs` で `SelfUpdateConfig` を定義し、`service.rs` でライフサイクルを orchestrate する。
+
+- `release.rs` で `ReleaseFinder` を置き、GitHub API、ターゲット選定、`needs_update` 判定を分離してテストしやすくする。
+- `download.rs` はアセット選別、ストリーミング、`sha256` 検証、`SelfUpdateStatus::Downloading` を扱い、進捗通知をトリガーする。
+- `replace.rs` には `AtomicReplacer` とロールバックロジックを集約し、成功・失敗のステータスを返す。
+- `traits.rs` などで HTTP クライアント、ファイル操作をトレイトとして抽象化し、テスト時にはモックと差し替える。
+
+- CLI では `SelfUpdateConfig` を構築し、`service::SelfUpdateService::run(config, notifier)` を呼ぶだけにする。
+- UI への通知は `SelfUpdateStatus` を受け取り、TUI コマンドや確認プロンプトの材料に変換する。
+- CLI はコアに対して状態通知と結果だけを受け取り、ユーザーへの説明、再起動案内、エラー表示を行う。
+
+- これによりコアは `SelfUpdateError` などを返す責務だけに集中でき、CLI の復帰処理や表示とは独立する。
+- テストはコアの各モジュールを単体でモック化し、CLI 層は `SelfUpdateService` をダミー実装で置き換えてフロー検証を行う。
