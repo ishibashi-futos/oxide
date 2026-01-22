@@ -96,29 +96,6 @@ pub fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateArgs, CliErro
     Ok(SelfUpdateArgs { tag, prerelease, yes })
 }
 
-pub fn self_update_decision_line(
-    env: &dyn VersionEnv,
-    cargo_version: &str,
-    args: &SelfUpdateArgs,
-) -> Result<Option<String>, CliError> {
-    let Some(tag) = args.tag.as_ref() else {
-        return Ok(None);
-    };
-    let current = current_version(env, cargo_version)
-        .map_err(|_| CliError::InvalidVersion("current".to_string()))?;
-    let target =
-        parse_version_tag(tag).map_err(|_| CliError::InvalidVersion(tag.to_string()))?;
-    let decision = decide_update(&current, &target);
-    let summary = match decision {
-        UpdateDecision::UpdateAvailable => "update available",
-        UpdateDecision::Downgrade => "downgrade",
-        UpdateDecision::UpToDate => "up-to-date",
-    };
-    Ok(Some(format!(
-        "self-update: {summary} ({current} -> {target})"
-    )))
-}
-
 #[derive(Debug)]
 pub struct SelfUpdatePlan {
     pub line: String,
@@ -332,20 +309,6 @@ mod tests {
         let error = parse_self_update_args(&args).unwrap_err();
 
         assert_eq!(error, CliError::MissingValue("--tag".to_string()));
-    }
-
-    #[test]
-    fn self_update_decision_line_reports_update() {
-        let env = FakeEnv::new("v1.0.0");
-        let args = SelfUpdateArgs {
-            tag: Some("v1.1.0".to_string()),
-            prerelease: false,
-            yes: false,
-        };
-
-        let line = self_update_decision_line(&env, "0.1.0", &args).unwrap();
-
-        assert_eq!(line, Some("self-update: update available (1.0.0 -> 1.1.0)".to_string()));
     }
 
     #[test]

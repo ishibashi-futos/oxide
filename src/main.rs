@@ -116,7 +116,6 @@ fn main() -> AppResult<()> {
                     return Ok(());
                 }
             }
-            println!("self-update: not implemented yet");
             Ok(())
         }
         Command::SelfUpdateRollback { yes } => {

@@ -54,6 +54,8 @@ pub enum SelfUpdateError {
     DigestMismatch,
     #[error("missing download url")]
     MissingDownloadUrl,
+    #[error("missing binary in archive: {0}")]
+    MissingBinaryInArchive(String),
     #[allow(dead_code)]
     #[error("no backups found")]
     NoBackupFound,
@@ -101,24 +103,6 @@ pub fn decide_update(current: &Version, target: &Version) -> UpdateDecision {
     } else {
         UpdateDecision::UpToDate
     }
-}
-
-pub fn select_latest_release(
-    releases: &[GitHubRelease],
-    allow_prerelease: bool,
-) -> Option<ReleaseTarget> {
-    releases
-        .iter()
-        .filter(|release| !release.draft)
-        .filter(|release| allow_prerelease || !release.prerelease)
-        .filter_map(|release| {
-            let version = parse_version_tag(&release.tag_name).ok()?;
-            Some(ReleaseTarget {
-                tag: release.tag_name.clone(),
-                version,
-            })
-        })
-        .max_by(|left, right| left.version.cmp(&right.version))
 }
 
 pub fn select_release_by_tag<'a>(
@@ -259,10 +243,6 @@ pub fn current_target_triple() -> Option<&'static str> {
     }
 }
 
-pub fn select_asset_name(release: &GitHubRelease, target: &str) -> Option<String> {
-    select_target_asset(release, target).map(|asset| asset.name.clone())
-}
-
 pub fn select_target_asset<'a>(
     release: &'a GitHubRelease,
     target: &str,
@@ -373,7 +353,71 @@ pub fn download_and_verify_asset(asset: &GitHubAsset) -> Result<PathBuf, SelfUpd
         .ok_or_else(|| SelfUpdateError::InvalidDigest("missing digest".to_string()))?;
     let path = download_asset_to_temp(url, &asset.name)?;
     verify_sha256_digest(&path, digest)?;
-    Ok(path)
+    unpack_if_needed(&path, &asset.name)
+}
+
+fn unpack_if_needed(path: &Path, asset_name: &str) -> Result<PathBuf, SelfUpdateError> {
+    if is_tar_gz(asset_name) {
+        extract_tar_gz(path, asset_name)
+    } else {
+        Ok(path.to_path_buf())
+    }
+}
+
+fn is_tar_gz(name: &str) -> bool {
+    name.ends_with(".tar.gz") || name.ends_with(".tgz")
+}
+
+fn extract_tar_gz(path: &Path, asset_name: &str) -> Result<PathBuf, SelfUpdateError> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| SelfUpdateError::Io(std::io::Error::other("time error")))?;
+    let mut dir = std::env::temp_dir();
+    let safe_name = asset_name.replace('/', "_");
+    dir.push(format!("ox-extract-{}-{}", stamp.as_millis(), safe_name));
+    std::fs::create_dir_all(&dir)?;
+    extract_tar_gz_to(path, &dir)?;
+    find_binary_in_dir(&dir)
+        .ok_or_else(|| SelfUpdateError::MissingBinaryInArchive(asset_name.to_string()))
+}
+
+fn extract_tar_gz_to(path: &Path, dir: &Path) -> Result<(), SelfUpdateError> {
+    let file = std::fs::File::open(path)?;
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    archive.unpack(dir)?;
+    Ok(())
+}
+
+fn find_binary_in_dir(dir: &Path) -> Option<PathBuf> {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(next) = stack.pop() {
+        let entries = std::fs::read_dir(&next).ok()?;
+        for entry in entries {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if is_binary_name(&path) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn is_binary_name(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        name == "ox.exe"
+    }
+    #[cfg(not(windows))]
+    {
+        name == "ox"
+    }
 }
 
 pub fn backup_path_for(current_exe: &Path, version_tag: &str) -> PathBuf {
@@ -501,129 +545,6 @@ mod tests {
     }
 
     #[test]
-    fn select_latest_release_ignores_draft_and_invalid_tags() {
-        let releases = vec![
-            GitHubRelease {
-                tag_name: "nightly".to_string(),
-                prerelease: false,
-                draft: false,
-                assets: Vec::new(),
-            },
-            GitHubRelease {
-                tag_name: "v1.0.0".to_string(),
-                prerelease: false,
-                draft: true,
-                assets: Vec::new(),
-            },
-            GitHubRelease {
-                tag_name: "v1.1.0".to_string(),
-                prerelease: false,
-                draft: false,
-                assets: Vec::new(),
-            },
-        ];
-
-        let latest = select_latest_release(&releases, false).unwrap();
-
-        assert_eq!(latest.tag, "v1.1.0");
-        assert_eq!(latest.version, Version::new(1, 1, 0));
-    }
-
-    #[test]
-    fn select_latest_release_skips_prerelease_by_default() {
-        let releases = vec![
-            GitHubRelease {
-                tag_name: "v1.1.0".to_string(),
-                prerelease: false,
-                draft: false,
-                assets: Vec::new(),
-            },
-            GitHubRelease {
-                tag_name: "v2.0.0-alpha.1".to_string(),
-                prerelease: true,
-                draft: false,
-                assets: Vec::new(),
-            },
-        ];
-
-        let latest = select_latest_release(&releases, false).unwrap();
-
-        assert_eq!(latest.tag, "v1.1.0");
-    }
-
-    #[test]
-    fn select_latest_release_allows_prerelease_when_flag_set() {
-        let releases = vec![
-            GitHubRelease {
-                tag_name: "v1.1.0".to_string(),
-                prerelease: false,
-                draft: false,
-                assets: Vec::new(),
-            },
-            GitHubRelease {
-                tag_name: "v2.0.0-alpha.1".to_string(),
-                prerelease: true,
-                draft: false,
-                assets: Vec::new(),
-            },
-        ];
-
-        let latest = select_latest_release(&releases, true).unwrap();
-
-        assert_eq!(latest.tag, "v2.0.0-alpha.1");
-    }
-
-    #[test]
-    fn select_asset_name_finds_matching_asset() {
-        let release = GitHubRelease {
-            tag_name: "v1.2.3".to_string(),
-            prerelease: false,
-            draft: false,
-            assets: vec![
-                GitHubAsset {
-                    name: "ox-x86_64-unknown-linux-gnu-v1.2.3".to_string(),
-                    download_url: None,
-                    digest: None,
-                },
-                GitHubAsset {
-                    name: "readme.txt".to_string(),
-                    download_url: None,
-                    digest: None,
-                },
-            ],
-        };
-
-        let asset = select_asset_name(&release, "x86_64-unknown-linux-gnu").unwrap();
-
-        assert_eq!(asset, "ox-x86_64-unknown-linux-gnu-v1.2.3");
-    }
-
-    #[test]
-    fn select_asset_name_falls_back_to_target_only() {
-        let release = GitHubRelease {
-            tag_name: "v1.2.3".to_string(),
-            prerelease: false,
-            draft: false,
-            assets: vec![
-                GitHubAsset {
-                    name: "ox-x86_64-unknown-linux-gnu.tar.gz".to_string(),
-                    download_url: None,
-                    digest: None,
-                },
-                GitHubAsset {
-                    name: "readme.txt".to_string(),
-                    download_url: None,
-                    digest: None,
-                },
-            ],
-        };
-
-        let asset = select_asset_name(&release, "x86_64-unknown-linux-gnu").unwrap();
-
-        assert_eq!(asset, "ox-x86_64-unknown-linux-gnu.tar.gz");
-    }
-
-    #[test]
     fn normalize_digest_strips_whitespace() {
         let digest = normalize_digest(" sha256:abcd ");
 
@@ -639,6 +560,27 @@ mod tests {
             digest,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
         );
+    }
+
+    #[test]
+    fn unpack_if_needed_extracts_tar_gz_binary() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("ox-aarch64-apple-darwin.tar.gz");
+        let payload_dir = temp.path().join("payload");
+        std::fs::create_dir_all(&payload_dir).unwrap();
+        let binary_path = payload_dir.join("ox");
+        std::fs::write(&binary_path, b"fake").unwrap();
+        let tar_gz = std::fs::File::create(&archive_path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(tar_gz, flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        archive.append_path_with_name(&binary_path, "ox").unwrap();
+        let encoder = archive.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let extracted = unpack_if_needed(&archive_path, "ox-aarch64-apple-darwin.tar.gz").unwrap();
+
+        assert!(extracted.ends_with("ox"));
+        assert!(extracted.exists());
     }
 
     #[test]
