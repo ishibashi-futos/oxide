@@ -39,7 +39,9 @@ pub fn render_entry_list(
     let text_style = if active {
         Style::default()
     } else {
-        Style::default().fg(to_color(theme.grayscale.high))
+        Style::default()
+            .fg(to_color(theme.grayscale.high))
+            .add_modifier(Modifier::DIM)
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -318,7 +320,7 @@ mod tests {
         assert!(style.add_modifier.contains(Modifier::DIM));
     }
 
-    
+
 
     #[test]
     fn render_search_footer_in_current_panel() {
