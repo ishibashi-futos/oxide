@@ -1,7 +1,7 @@
 use crate::core::self_update::{
     SelfUpdateError, UpdateDecision, VersionEnv, current_target_triple, current_version,
-    current_version_tag, decide_update, latest_release_info, parse_version_tag,
-    select_target_asset,
+    current_version_tag, decide_update, download_and_verify_asset, latest_release_info,
+    parse_version_tag, select_target_asset,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +15,8 @@ pub enum Command {
 pub struct SelfUpdateArgs {
     pub tag: Option<String>,
     pub prerelease: bool,
+    pub download: bool,
+    pub apply: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +68,8 @@ pub fn self_update_intro(env: &dyn VersionEnv, cargo_version: &str) -> String {
 pub fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateArgs, CliError> {
     let mut tag = None;
     let mut prerelease = true;
+    let mut download = false;
+    let mut apply = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -78,10 +82,21 @@ pub fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateArgs, CliErro
             "--prerelease" => {
                 prerelease = true;
             }
+            "--download" => {
+                download = true;
+            }
+            "--apply" => {
+                apply = true;
+            }
             other => return Err(CliError::UnknownOption(other.to_string())),
         }
     }
-    Ok(SelfUpdateArgs { tag, prerelease })
+    Ok(SelfUpdateArgs {
+        tag,
+        prerelease,
+        download,
+        apply,
+    })
 }
 
 pub fn self_update_decision_line(
@@ -126,10 +141,30 @@ pub fn self_update_latest_decision_line(
     if let Some(triple) = current_target_triple() {
         if let Some(asset) = select_target_asset(&release, triple) {
             line.push_str(&format!(" | asset: {}", asset.name));
-            line.push_str(&format!(
-                " | digest: {}",
-                digest_status(asset.digest.as_deref())
-            ));
+            line.push_str(&format!(" | digest: {}", digest_status(asset.digest.as_deref())));
+            if args.download || args.apply {
+                match download_and_verify_asset(asset) {
+                    Ok(path) => {
+                        line.push_str(&format!(" | verified: {}", path.display()));
+                        if args.apply {
+                            match crate::core::self_update::replace_current_exe(
+                                &path,
+                                &target.tag,
+                            ) {
+                                Ok(backup) => {
+                                    line.push_str(&format!(" | backup: {}", backup.display()));
+                                }
+                                Err(error) => {
+                                    return Err(map_update_error(error));
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        return Err(map_update_error(error));
+                    }
+                }
+            }
         } else {
             line.push_str(&format!(" | asset: not found for {triple}"));
         }
@@ -237,6 +272,8 @@ mod tests {
             SelfUpdateArgs {
                 tag: Some("v1.2.3".to_string()),
                 prerelease: true,
+                download: false,
+                apply: false,
             }
         );
     }
@@ -256,6 +293,8 @@ mod tests {
         let args = SelfUpdateArgs {
             tag: Some("v1.1.0".to_string()),
             prerelease: false,
+            download: false,
+            apply: false,
         };
 
         let line = self_update_decision_line(&env, "0.1.0", &args).unwrap();
@@ -274,6 +313,8 @@ mod tests {
             SelfUpdateArgs {
                 tag: None,
                 prerelease: true,
+                download: false,
+                apply: false,
             }
         );
     }
@@ -289,6 +330,42 @@ mod tests {
             SelfUpdateArgs {
                 tag: None,
                 prerelease: true,
+                download: false,
+                apply: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_self_update_args_accepts_download() {
+        let args = vec!["--download".to_string()];
+
+        let parsed = parse_self_update_args(&args).unwrap();
+
+        assert_eq!(
+            parsed,
+            SelfUpdateArgs {
+                tag: None,
+                prerelease: true,
+                download: true,
+                apply: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_self_update_args_accepts_apply() {
+        let args = vec!["--apply".to_string()];
+
+        let parsed = parse_self_update_args(&args).unwrap();
+
+        assert_eq!(
+            parsed,
+            SelfUpdateArgs {
+                tag: None,
+                prerelease: true,
+                download: false,
+                apply: true,
             }
         );
     }

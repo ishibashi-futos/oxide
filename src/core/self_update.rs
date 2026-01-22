@@ -1,5 +1,8 @@
 use semver::Version;
-use std::io::Read;
+use sha2::Digest;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +48,12 @@ pub enum SelfUpdateError {
     MissingField(&'static str),
     #[error("no valid releases: {0}")]
     NoValidRelease(String),
+    #[error("invalid digest: {0}")]
+    InvalidDigest(String),
+    #[error("digest mismatch")]
+    DigestMismatch,
+    #[error("missing download url")]
+    MissingDownloadUrl,
 }
 
 pub fn parse_version_tag(tag: &str) -> Result<Version, semver::Error> {
@@ -276,6 +285,109 @@ pub fn normalize_digest(digest: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+pub fn parse_sha256_digest(digest: &str) -> Result<String, SelfUpdateError> {
+    let trimmed = digest.trim();
+    let Some(rest) = trimmed.strip_prefix("sha256:") else {
+        return Err(SelfUpdateError::InvalidDigest(trimmed.to_string()));
+    };
+    let hex = rest.trim();
+    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(SelfUpdateError::InvalidDigest(trimmed.to_string()));
+    }
+    Ok(hex.to_string())
+}
+
+pub fn compute_sha256_hex(path: &Path) -> Result<String, SelfUpdateError> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let digest = hasher.finalize();
+    Ok(to_hex(&digest))
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{:02x}", byte);
+    }
+    out
+}
+
+pub fn verify_sha256_digest(path: &Path, digest: &str) -> Result<(), SelfUpdateError> {
+    let expected = parse_sha256_digest(digest)?;
+    let actual = compute_sha256_hex(path)?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(SelfUpdateError::DigestMismatch)
+    }
+}
+
+pub fn download_asset_to_temp(url: &str, asset_name: &str) -> Result<PathBuf, SelfUpdateError> {
+    let mut response = ureq::get(url)
+        .set("User-Agent", "ox-self-update")
+        .set("Accept", "application/octet-stream")
+        .call()?
+        .into_reader();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| SelfUpdateError::Io(std::io::Error::other("time error")))?;
+    let filename = format!("ox-download-{}-{asset_name}", stamp.as_millis());
+    let mut path = std::env::temp_dir();
+    path.push(filename);
+    let mut file = std::fs::File::create(&path)?;
+    std::io::copy(&mut response, &mut file)?;
+    file.flush()?;
+    Ok(path)
+}
+
+pub fn download_and_verify_asset(asset: &GitHubAsset) -> Result<PathBuf, SelfUpdateError> {
+    let url = asset
+        .download_url
+        .as_deref()
+        .ok_or(SelfUpdateError::MissingDownloadUrl)?;
+    let digest = asset
+        .digest
+        .as_deref()
+        .ok_or_else(|| SelfUpdateError::InvalidDigest("missing digest".to_string()))?;
+    let path = download_asset_to_temp(url, &asset.name)?;
+    verify_sha256_digest(&path, digest)?;
+    Ok(path)
+}
+
+pub fn backup_path_for(current_exe: &Path, version_tag: &str) -> PathBuf {
+    let name = format!("ox-{}", version_tag);
+    current_exe
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(name)
+}
+
+pub fn replace_current_exe(downloaded: &Path, version_tag: &str) -> Result<PathBuf, SelfUpdateError> {
+    let current_exe = std::env::current_exe()?;
+    let backup = backup_path_for(&current_exe, version_tag);
+    if !backup.exists() {
+        std::fs::copy(&current_exe, &backup)?;
+    }
+    let temp = current_exe.with_extension("new");
+    std::fs::copy(downloaded, &temp)?;
+    #[cfg(unix)]
+    {
+        let perms = std::fs::metadata(&current_exe)?.permissions();
+        std::fs::set_permissions(&temp, perms)?;
+    }
+    std::fs::rename(&temp, &current_exe)?;
+    Ok(backup)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,6 +592,36 @@ mod tests {
         let digest = normalize_digest(" sha256:abcd ");
 
         assert_eq!(digest, Some("sha256:abcd".to_string()));
+    }
+
+    #[test]
+    fn parse_sha256_digest_accepts_valid() {
+        let digest = parse_sha256_digest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .unwrap();
+
+        assert_eq!(
+            digest,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
+        );
+    }
+
+    #[test]
+    fn parse_sha256_digest_rejects_invalid() {
+        let error = parse_sha256_digest("sha1:abc").unwrap_err();
+
+        assert!(matches!(error, SelfUpdateError::InvalidDigest(_)));
+    }
+
+    #[test]
+    fn verify_sha256_digest_matches_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("file.txt");
+        std::fs::write(&path, b"hello").unwrap();
+        let digest = format!("sha256:{}", compute_sha256_hex(&path).unwrap());
+
+        let result = verify_sha256_digest(&path, &digest);
+
+        assert!(result.is_ok());
     }
 
     #[test]
