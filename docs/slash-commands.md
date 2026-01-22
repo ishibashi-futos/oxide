@@ -54,6 +54,10 @@
 
 エラー時はプレビュー領域に理由を表示します。
 
+シンタックスハイライトは `syntect` のデフォルト対応言語に準拠します。
+
+代表例: Rust, Go, Python, JavaScript/TypeScript, JSON, YAML, TOML, Markdown, Shell など。
+
 ### `/tab`
 
 タブを一覧表示したり切り替えたりします。
