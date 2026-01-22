@@ -73,7 +73,7 @@ pub fn self_update_intro(env: &dyn VersionEnv, cargo_version: &str) -> String {
 
 pub fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateArgs, CliError> {
     let mut tag = None;
-    let mut prerelease = true;
+    let mut prerelease = false;
     let mut yes = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -296,7 +296,7 @@ mod tests {
             parsed,
             SelfUpdateArgs {
                 tag: Some("v1.2.3".to_string()),
-                prerelease: true,
+                prerelease: false,
                 yes: false,
             }
         );
@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_self_update_args_defaults_prerelease_true() {
+    fn parse_self_update_args_defaults_prerelease_false() {
         let args = Vec::new();
 
         let parsed = parse_self_update_args(&args).unwrap();
@@ -337,7 +337,7 @@ mod tests {
             parsed,
             SelfUpdateArgs {
                 tag: None,
-                prerelease: true,
+                prerelease: false,
                 yes: false,
             }
         );
@@ -353,7 +353,7 @@ mod tests {
             parsed,
             SelfUpdateArgs {
                 tag: None,
-                prerelease: true,
+                prerelease: false,
                 yes: true,
             }
         );
