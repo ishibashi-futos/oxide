@@ -2,7 +2,7 @@ use chrono::{DateTime, Local};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Style},
+    style::Style,
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -30,7 +30,10 @@ pub fn render_bottom_bar(
         area.width,
         theme,
     ));
-    frame.render_widget(bar.style(Style::default().bg(to_color(theme.grayscale.low))), area);
+    frame.render_widget(
+        bar.style(Style::default().bg(to_color(theme.grayscale.low))),
+        area,
+    );
 }
 
 pub fn render_slash_bar(

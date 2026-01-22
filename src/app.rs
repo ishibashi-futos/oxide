@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 
 use crate::config::Config;
 use crate::core::{
-    ColorTheme, ColorThemeId, Entry, SlashCommand, SlashCommandError, list_entries,
-    parse_slash_command, ShellCommandError, ShellCommandRequest,
-    ShellExecutionResult, ShellEvent, ShellPermission, ShellWorker,
+    ColorTheme, ColorThemeId, Entry, ShellCommandError, ShellCommandRequest, ShellEvent,
+    ShellExecutionResult, ShellPermission, ShellWorker, SlashCommand, SlashCommandError,
+    list_entries, parse_slash_command,
 };
 use crate::error::{AppError, AppResult};
 use crate::tabs::{TabSummary, TabsState};
@@ -432,14 +432,18 @@ impl App {
 
     pub fn complete_slash_candidate(&mut self) {
         if let Some(target) = self.shell_completion_target() {
-            let Some(candidate) = self.shell_path_candidates(&target.prefix).into_iter().next()
+            let Some(candidate) = self
+                .shell_path_candidates(&target.prefix)
+                .into_iter()
+                .next()
             else {
                 return;
             };
             let mut buffer = String::new();
             buffer.push_str(&self.slash_input_buffer[..target.range.start]);
             buffer.push_str(&candidate.text);
-            if !candidate.text.ends_with('/') && !candidate.text.ends_with(std::path::MAIN_SEPARATOR)
+            if !candidate.text.ends_with('/')
+                && !candidate.text.ends_with(std::path::MAIN_SEPARATOR)
             {
                 buffer.push(' ');
             }
@@ -708,19 +712,16 @@ impl App {
             theme,
         });
         match context {
-            CommandContext::Tab(_) => self.timed_feedback(
-                format!("theme: {}", theme.name),
-                FeedbackStatus::Success,
-            ),
+            CommandContext::Tab(_) => {
+                self.timed_feedback(format!("theme: {}", theme.name), FeedbackStatus::Success)
+            }
         }
     }
 
     fn handle_shell_command(&mut self, command: &SlashCommand) -> SlashFeedback {
         if !self.shell_permission.is_allowed() {
-            return self.timed_feedback(
-                "Shell commands disabled".to_string(),
-                FeedbackStatus::Warn,
-            );
+            return self
+                .timed_feedback("Shell commands disabled".to_string(), FeedbackStatus::Warn);
         }
         let raw = command
             .raw
@@ -774,7 +775,11 @@ impl App {
         if !after.starts_with(char::is_whitespace) {
             return None;
         }
-        let has_trailing_space = input.chars().last().map(|ch| ch.is_whitespace()).unwrap_or(false);
+        let has_trailing_space = input
+            .chars()
+            .last()
+            .map(|ch| ch.is_whitespace())
+            .unwrap_or(false);
         let (start, end) = if has_trailing_space {
             (input.len(), input.len())
         } else {
@@ -1241,7 +1246,10 @@ fn slice_line(line: &str, offset: usize, width: usize) -> String {
 
 fn format_shell_result(result: &ShellExecutionResult) -> String {
     let exit = result.status_code.unwrap_or(-1);
-    let mut parts = vec![format!("shell: exit={exit}"), format!("{}ms", result.duration_ms)];
+    let mut parts = vec![
+        format!("shell: exit={exit}"),
+        format!("{}ms", result.duration_ms),
+    ];
     if let Some(stdout) = compact_output(&result.stdout, 80) {
         parts.push(format!("stdout={stdout}"));
     }
@@ -1506,10 +1514,7 @@ mod slash_tests {
             .map(|candidate| candidate.text)
             .collect::<Vec<String>>();
 
-        assert_eq!(
-            texts,
-            vec!["./diary.txt".to_string(), "./dir/".to_string()]
-        );
+        assert_eq!(texts, vec!["./diary.txt".to_string(), "./dir/".to_string()]);
     }
 
     #[test]
@@ -1545,8 +1550,7 @@ mod slash_tests {
     fn shell_completion_keeps_existing_shell_output() {
         let temp_dir = tempfile::tempdir().unwrap();
         std::fs::write(temp_dir.path().join("diary.txt"), "note").unwrap();
-        let request =
-            ShellCommandRequest::new(temp_dir.path().to_path_buf(), "echo hi").unwrap();
+        let request = ShellCommandRequest::new(temp_dir.path().to_path_buf(), "echo hi").unwrap();
         let result = ShellExecutionResult {
             status_code: Some(0),
             stdout: "ok".to_string(),
@@ -1610,7 +1614,13 @@ mod slash_tests {
         let first = candidates.items.first().unwrap();
 
         assert!(first.text.contains("Glacier"));
-        assert!(first.description.as_deref().unwrap_or("").contains("success"));
+        assert!(
+            first
+                .description
+                .as_deref()
+                .unwrap_or("")
+                .contains("success")
+        );
     }
 
     #[test]

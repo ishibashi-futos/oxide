@@ -119,10 +119,7 @@ impl TabsState {
     }
 
     pub(crate) fn active_tab_id(&self) -> u64 {
-        self.tabs
-            .get(self.active)
-            .map(|tab| tab.id)
-            .unwrap_or(0)
+        self.tabs.get(self.active).map(|tab| tab.id).unwrap_or(0)
     }
 
     pub(crate) fn active_theme_id(&self) -> ColorThemeId {
@@ -133,10 +130,7 @@ impl TabsState {
     }
 
     pub(crate) fn set_active_theme(&mut self, theme_id: ColorThemeId) -> ColorPreference {
-        let tab = self
-            .tabs
-            .get_mut(self.active)
-            .expect("active tab exists");
+        let tab = self.tabs.get_mut(self.active).expect("active tab exists");
         tab.set_theme(theme_id);
         tab.color_preference()
     }
@@ -164,10 +158,7 @@ impl Tab {
 impl ThemeRotation {
     fn new(start: ColorThemeId) -> Self {
         let order = ColorThemeId::all().to_vec();
-        let index = order
-            .iter()
-            .position(|id| *id == start)
-            .unwrap_or(0);
+        let index = order.iter().position(|id| *id == start).unwrap_or(0);
         Self { order, index }
     }
 

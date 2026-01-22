@@ -104,9 +104,7 @@ fn spawn_reader<R: std::io::Read + Send + 'static>(
     event_tx: Sender<ShellEvent>,
     kind: StreamKind,
 ) -> thread::JoinHandle<Vec<u8>> {
-    thread::spawn(move || {
-        collect_stream(reader, &event_tx, kind)
-    })
+    thread::spawn(move || collect_stream(reader, &event_tx, kind))
 }
 
 fn collect_stream<R: std::io::Read>(
@@ -137,9 +135,7 @@ fn collect_stream<R: std::io::Read>(
     collected
 }
 
-fn read_lines<R: std::io::Read>(
-    mut reader: BufReader<R>,
-) -> impl Iterator<Item = String> {
+fn read_lines<R: std::io::Read>(mut reader: BufReader<R>) -> impl Iterator<Item = String> {
     std::iter::from_fn(move || {
         let mut line = String::new();
         match reader.read_line(&mut line) {
@@ -158,11 +154,9 @@ mod tests {
     #[test]
     fn shell_worker_streams_stdout_lines() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let request = ShellCommandRequest::new(
-            temp_dir.path().to_path_buf(),
-            "printf 'one\\ntwo\\n'",
-        )
-        .unwrap();
+        let request =
+            ShellCommandRequest::new(temp_dir.path().to_path_buf(), "printf 'one\\ntwo\\n'")
+                .unwrap();
         let worker = ShellWorker::new();
 
         worker.request(request);
@@ -199,7 +193,11 @@ mod tests {
         let lines: Vec<String> = read_lines(reader).collect();
         assert_eq!(
             lines,
-            vec!["one\n".to_string(), "two\n".to_string(), "three".to_string()]
+            vec![
+                "one\n".to_string(),
+                "two\n".to_string(),
+                "three".to_string()
+            ]
         );
     }
 

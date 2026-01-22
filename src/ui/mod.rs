@@ -35,11 +35,10 @@ use event::{
     is_cursor_down_event, is_cursor_left_event, is_cursor_right_event, is_cursor_up_event,
     is_end_event, is_enter_dir_event, is_enter_event, is_home_event, is_new_tab_event,
     is_next_tab_event, is_page_down_event, is_page_up_event, is_parent_event, is_prev_tab_event,
-    is_quit_event,
-    is_search_backspace_event, is_search_reset_event, is_slash_activate_event,
-    is_slash_cancel_event, is_slash_complete_event, is_slash_history_next_event,
-    is_slash_history_prev_event, is_shell_output_toggle_event, is_toggle_hidden_event,
-    search_char, slash_input_char,
+    is_quit_event, is_search_backspace_event, is_search_reset_event, is_shell_output_toggle_event,
+    is_slash_activate_event, is_slash_cancel_event, is_slash_complete_event,
+    is_slash_history_next_event, is_slash_history_prev_event, is_toggle_hidden_event, search_char,
+    slash_input_char,
 };
 use layout::{split_main, split_panes};
 use main_pane::render_entry_list;
@@ -366,7 +365,16 @@ fn draw(
         None
     };
     let (left, right, preview) = split_panes(main, preview_ratio);
-    render_entry_list(frame, left, &app.parent_entries, None, "parent", "", theme, false);
+    render_entry_list(
+        frame,
+        left,
+        &app.parent_entries,
+        None,
+        "parent",
+        "",
+        theme,
+        false,
+    );
     render_entry_list(
         frame,
         right,
