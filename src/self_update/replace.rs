@@ -15,16 +15,31 @@ pub fn replace_current_exe(
 ) -> Result<PathBuf, SelfUpdateError> {
     let current_exe = std::env::current_exe()?;
     let backup = backup_path_for(&current_exe, version_tag);
-    if !backup.exists() {
-        std::fs::copy(&current_exe, &backup)?;
-    }
     let temp = current_exe.with_extension("new");
+
+    if temp.exists() {
+        std::fs::remove_file(&temp)?;
+    }
+
     std::fs::copy(downloaded, &temp)?;
+
     #[cfg(unix)]
     {
-        let perms = std::fs::metadata(&current_exe)?.permissions();
-        std::fs::set_permissions(&temp, perms)?;
+        let current_perms = std::fs::metadata(&current_exe)?.permissions();
+        std::fs::set_permissions(&temp, current_perms)?;
+        if !backup.exists() {
+            std::fs::copy(&current_exe, &backup)?;
+        }
     }
+
+    #[cfg(windows)]
+    {
+        if backup.exists() {
+            std::fs::remove_file(&backup)?;
+        }
+        std::fs::rename(&current_exe, &backup)?;
+    }
+
     std::fs::rename(&temp, &current_exe)?;
     Ok(backup)
 }
