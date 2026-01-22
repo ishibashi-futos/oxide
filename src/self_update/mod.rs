@@ -1,6 +1,7 @@
 pub mod config;
 pub mod download;
 pub mod error;
+pub mod http;
 pub mod release;
 pub mod replace;
 pub mod service;

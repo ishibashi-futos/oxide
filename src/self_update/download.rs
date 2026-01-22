@@ -3,6 +3,7 @@ use crate::self_update::release::GitHubAsset;
 use sha2::Digest;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use ureq::Agent;
 
 pub fn parse_sha256_digest(digest: &str) -> Result<String, SelfUpdateError> {
     let trimmed = digest.trim();
@@ -50,8 +51,13 @@ pub fn verify_sha256_digest(path: &Path, digest: &str) -> Result<(), SelfUpdateE
     }
 }
 
-pub fn download_asset_to_temp(url: &str, asset_name: &str) -> Result<PathBuf, SelfUpdateError> {
-    let mut response = ureq::get(url)
+pub fn download_asset_to_temp(
+    client: &Agent,
+    url: &str,
+    asset_name: &str,
+) -> Result<PathBuf, SelfUpdateError> {
+    let mut response = client
+        .get(url)
         .set("User-Agent", "ox-self-update")
         .set("Accept", "application/octet-stream")
         .call()?
@@ -68,7 +74,10 @@ pub fn download_asset_to_temp(url: &str, asset_name: &str) -> Result<PathBuf, Se
     Ok(path)
 }
 
-pub fn download_and_verify_asset(asset: &GitHubAsset) -> Result<PathBuf, SelfUpdateError> {
+pub fn download_and_verify_asset(
+    client: &Agent,
+    asset: &GitHubAsset,
+) -> Result<PathBuf, SelfUpdateError> {
     let url = asset
         .download_url
         .as_deref()
@@ -77,7 +86,7 @@ pub fn download_and_verify_asset(asset: &GitHubAsset) -> Result<PathBuf, SelfUpd
         .digest
         .as_deref()
         .ok_or_else(|| SelfUpdateError::InvalidDigest("missing digest".to_string()))?;
-    let path = download_asset_to_temp(url, &asset.name)?;
+    let path = download_asset_to_temp(client, url, &asset.name)?;
     verify_sha256_digest(&path, digest)?;
     unpack_if_needed(&path, &asset.name)
 }

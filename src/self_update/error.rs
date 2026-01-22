@@ -28,4 +28,6 @@ pub enum SelfUpdateError {
     ReleaseNotFound(String),
     #[error("prerelease not allowed: {0}")]
     PrereleaseNotAllowed(String),
+    #[error("tls configuration error: {0}")]
+    TlsConfig(String),
 }

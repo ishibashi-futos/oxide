@@ -16,6 +16,7 @@ pub struct SelfUpdateArgs {
     pub tag: Option<String>,
     pub prerelease: bool,
     pub yes: bool,
+    pub insecure: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +73,7 @@ pub fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateArgs, CliErro
     let mut tag = None;
     let mut prerelease = false;
     let mut yes = false;
+    let mut insecure = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -87,6 +89,9 @@ pub fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateArgs, CliErro
             "--yes" | "-y" => {
                 yes = true;
             }
+            "--insecure" => {
+                insecure = true;
+            }
             other => return Err(CliError::UnknownOption(other.to_string())),
         }
     }
@@ -94,6 +99,7 @@ pub fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateArgs, CliErro
         tag,
         prerelease,
         yes,
+        insecure,
     })
 }
 
@@ -108,12 +114,10 @@ pub struct SelfUpdatePlanSummary {
 pub fn self_update_latest_plan(
     env: &dyn VersionEnv,
     cargo_version: &str,
-    repo: &str,
-    args: &SelfUpdateArgs,
+    config: &SelfUpdateConfig,
 ) -> Result<SelfUpdatePlanSummary, CliError> {
-    let config = SelfUpdateConfig::new(repo, args.prerelease);
     let plan =
-        SelfUpdateService::plan_latest(&config, env, cargo_version).map_err(map_update_error)?;
+        SelfUpdateService::plan_latest(config, env, cargo_version).map_err(map_update_error)?;
     Ok(build_plan_summary(plan))
 }
 
@@ -168,13 +172,11 @@ fn build_plan_summary(plan: SelfUpdatePlan) -> SelfUpdatePlanSummary {
 pub fn self_update_tag_plan(
     env: &dyn VersionEnv,
     cargo_version: &str,
-    repo: &str,
+    config: &SelfUpdateConfig,
     tag: &str,
-    allow_prerelease: bool,
 ) -> Result<SelfUpdatePlanSummary, CliError> {
-    let config = SelfUpdateConfig::new(repo, allow_prerelease);
     let plan =
-        SelfUpdateService::plan_tag(&config, env, cargo_version, tag).map_err(map_update_error)?;
+        SelfUpdateService::plan_tag(config, env, cargo_version, tag).map_err(map_update_error)?;
     Ok(build_plan_summary(plan))
 }
 
@@ -291,6 +293,7 @@ mod tests {
                 tag: Some("v1.2.3".to_string()),
                 prerelease: false,
                 yes: false,
+                insecure: false,
             }
         );
     }
@@ -316,6 +319,7 @@ mod tests {
                 tag: None,
                 prerelease: true,
                 yes: false,
+                insecure: false,
             }
         );
     }
@@ -332,6 +336,7 @@ mod tests {
                 tag: None,
                 prerelease: false,
                 yes: false,
+                insecure: false,
             }
         );
     }
@@ -348,6 +353,24 @@ mod tests {
                 tag: None,
                 prerelease: false,
                 yes: true,
+                insecure: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_self_update_args_accepts_insecure() {
+        let args = vec!["--insecure".to_string()];
+
+        let parsed = parse_self_update_args(&args).unwrap();
+
+        assert_eq!(
+            parsed,
+            SelfUpdateArgs {
+                tag: None,
+                prerelease: false,
+                yes: false,
+                insecure: true,
             }
         );
     }

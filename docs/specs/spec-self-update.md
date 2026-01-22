@@ -96,9 +96,9 @@ Windows では実行中のバイナリを上書き・削除できないため、
 
 ### TODO
 
-- [ ] self-updateの処理をにまとめ、TUIのUI/Coreとの境界を明確にする。
+- [x] self-updateの処理をにまとめ、TUIのUI/Coreとの境界を明確にする。
 - [ ] `TLS/CA` を実装する。
-- [ ] `--insecure` を実装する。
+- [x] `--insecure` を実装する。
 - [ ] `--offline` を実装する。
 - [x] Windowsの置換手順を明確にし、必要なら専用処理を入れる。 (Move-away方式を採用)
 - [ ] Windowsの場合の置換処理の実装

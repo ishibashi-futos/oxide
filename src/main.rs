@@ -12,7 +12,7 @@ use crate::cli::{
     Command, parse_args, parse_self_update_args, render_error, self_update_intro,
     self_update_latest_plan, self_update_tag_plan, usage,
 };
-use crate::self_update::{SelfUpdateService, SystemVersionEnv, UpdateDecision};
+use crate::self_update::{SelfUpdateConfig, SelfUpdateService, SystemVersionEnv, UpdateDecision};
 use crate::{app::App, error::AppResult, opener::PlatformOpener};
 
 fn main() -> AppResult<()> {
@@ -40,14 +40,16 @@ fn main() -> AppResult<()> {
             println!("{}", self_update_intro(&env, env!("CARGO_PKG_VERSION")));
             match parse_self_update_args(&args) {
                 Ok(parsed) => {
+                    let config = SelfUpdateConfig::new(
+                        "ishibashi-futos/oxide",
+                        parsed.prerelease,
+                        parsed.insecure,
+                    );
+                    if parsed.insecure {
+                        eprintln!("warning: TLS certificate verification disabled (--insecure)");
+                    }
                     let plan = if let Some(tag) = parsed.tag.as_ref() {
-                        match self_update_tag_plan(
-                            &env,
-                            env!("CARGO_PKG_VERSION"),
-                            "ishibashi-futos/oxide",
-                            tag,
-                            parsed.prerelease,
-                        ) {
+                        match self_update_tag_plan(&env, env!("CARGO_PKG_VERSION"), &config, tag) {
                             Ok(plan) => plan,
                             Err(error) => {
                                 eprintln!("error: {}", render_error(&error));
@@ -55,12 +57,7 @@ fn main() -> AppResult<()> {
                             }
                         }
                     } else {
-                        match self_update_latest_plan(
-                            &env,
-                            env!("CARGO_PKG_VERSION"),
-                            "ishibashi-futos/oxide",
-                            &parsed,
-                        ) {
+                        match self_update_latest_plan(&env, env!("CARGO_PKG_VERSION"), &config) {
                             Ok(plan) => plan,
                             Err(error) => {
                                 eprintln!("error: {}", render_error(&error));
@@ -95,7 +92,7 @@ fn main() -> AppResult<()> {
                         println!("self-update: cancelled");
                         return Ok(());
                     }
-                    match SelfUpdateService::download_asset(asset) {
+                    match SelfUpdateService::download_asset(asset, &config) {
                         Ok(path) => {
                             match SelfUpdateService::replace_current(&path, &plan.target_tag) {
                                 Ok(backup) => {

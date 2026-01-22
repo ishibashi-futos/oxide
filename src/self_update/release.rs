@@ -1,6 +1,8 @@
 use crate::self_update::error::SelfUpdateError;
 use crate::self_update::traits::VersionEnv;
 use semver::Version;
+use std::io::Read;
+use ureq::Agent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateDecision {
@@ -99,9 +101,10 @@ pub fn select_latest_release_info(
     best
 }
 
-pub fn fetch_releases(repo: &str) -> Result<Vec<GitHubRelease>, SelfUpdateError> {
+pub fn fetch_releases(client: &Agent, repo: &str) -> Result<Vec<GitHubRelease>, SelfUpdateError> {
     let url = format!("https://api.github.com/repos/{repo}/releases");
-    let response = ureq::get(&url)
+    let response = client
+        .get(&url)
         .set("User-Agent", "ox-self-update")
         .set("Accept", "application/vnd.github+json")
         .call()?;
@@ -174,10 +177,11 @@ fn normalize_digest(digest: &str) -> Option<String> {
 }
 
 pub fn latest_release_info(
+    client: &Agent,
     repo: &str,
     allow_prerelease: bool,
 ) -> Result<(GitHubRelease, ReleaseTarget), SelfUpdateError> {
-    let releases = fetch_releases(repo)?;
+    let releases = fetch_releases(client, repo)?;
     select_latest_release_info(&releases, allow_prerelease)
         .ok_or_else(|| no_valid_release_error(&releases, allow_prerelease))
 }

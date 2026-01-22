@@ -1,13 +1,16 @@
-use crate::self_update::config::SelfUpdateConfig;
-use crate::self_update::download;
-use crate::self_update::error::SelfUpdateError;
-use crate::self_update::release::{
-    GitHubAsset, GitHubRelease, ReleaseTarget, UpdateDecision, current_version, decide_update,
-    fetch_releases, latest_release_info, parse_version_tag, select_release_by_tag,
-    select_target_asset,
+use crate::self_update::{
+    config::SelfUpdateConfig,
+    download,
+    error::SelfUpdateError,
+    http::HttpClient,
+    release::{
+        GitHubAsset, GitHubRelease, ReleaseTarget, UpdateDecision, current_version, decide_update,
+        fetch_releases, latest_release_info, parse_version_tag, select_release_by_tag,
+        select_target_asset,
+    },
+    replace,
+    traits::VersionEnv,
 };
-use crate::self_update::replace;
-use crate::self_update::traits::VersionEnv;
 use semver::Version;
 use std::path::{Path, PathBuf};
 
@@ -38,7 +41,9 @@ impl SelfUpdateService {
         cargo_version: &str,
     ) -> Result<SelfUpdatePlan, SelfUpdateError> {
         let current = current_version(env, cargo_version)?;
-        let (release, target) = latest_release_info(&config.repo, config.allow_prerelease)?;
+        let client = HttpClient::new(config.allow_insecure)?;
+        let (release, target) =
+            latest_release_info(client.agent(), &config.repo, config.allow_prerelease)?;
         let decision = decide_update(&current, &target.version);
         Ok(SelfUpdatePlan {
             decision,
@@ -55,7 +60,8 @@ impl SelfUpdateService {
         tag: &str,
     ) -> Result<SelfUpdatePlan, SelfUpdateError> {
         let current = current_version(env, cargo_version)?;
-        let releases = fetch_releases(&config.repo)?;
+        let client = HttpClient::new(config.allow_insecure)?;
+        let releases = fetch_releases(client.agent(), &config.repo)?;
         let release = select_release_by_tag(&releases, tag)
             .ok_or_else(|| SelfUpdateError::ReleaseNotFound(tag.to_string()))?;
         if release.prerelease && !config.allow_prerelease {
@@ -75,8 +81,12 @@ impl SelfUpdateService {
         })
     }
 
-    pub fn download_asset(asset: &GitHubAsset) -> Result<PathBuf, SelfUpdateError> {
-        download::download_and_verify_asset(asset)
+    pub fn download_asset(
+        asset: &GitHubAsset,
+        config: &SelfUpdateConfig,
+    ) -> Result<PathBuf, SelfUpdateError> {
+        let client = HttpClient::new(config.allow_insecure)?;
+        download::download_and_verify_asset(client.agent(), asset)
     }
 
     pub fn replace_current(
