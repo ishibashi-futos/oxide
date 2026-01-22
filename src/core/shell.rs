@@ -221,12 +221,9 @@ impl ShellExecutionGuard {
             .current_dir(&request.working_dir);
         if !self.allowed_shell.inherit_env() {
             command.env_clear();
-            self.safe_env
-                .entries
-                .iter()
-                .for_each(|(key, value)| {
-                    command.env(key, value);
-                });
+            self.safe_env.entries.iter().for_each(|(key, value)| {
+                command.env(key, value);
+            });
         }
         command
     }
@@ -321,7 +318,9 @@ fn ensure_args_within_working_dir(
     #[cfg(windows)]
     let base_raw_str = comparable_path_string(&base_raw);
     #[cfg(windows)]
-    let base_canon = working_dir.canonicalize().unwrap_or_else(|_| base_raw.clone());
+    let base_canon = working_dir
+        .canonicalize()
+        .unwrap_or_else(|_| base_raw.clone());
     #[cfg(windows)]
     let base_canon_str = comparable_path_string(&base_canon);
     args.iter().try_for_each(|arg| {
@@ -340,7 +339,8 @@ fn ensure_args_within_working_dir(
         #[cfg(not(windows))]
         {
             let normalized = if full.exists() {
-                full.canonicalize().unwrap_or_else(|_| normalize_path(&full))
+                full.canonicalize()
+                    .unwrap_or_else(|_| normalize_path(&full))
             } else {
                 normalize_path(&full)
             };
@@ -357,8 +357,9 @@ fn ensure_args_within_working_dir(
             let normalized_raw_str = comparable_path_string(&normalized_raw);
             let mut ok = is_within_dir_string(&base_raw_str, &normalized_raw_str);
             if full.exists() {
-                let normalized_canon =
-                    full.canonicalize().unwrap_or_else(|_| normalize_path(&full));
+                let normalized_canon = full
+                    .canonicalize()
+                    .unwrap_or_else(|_| normalize_path(&full));
                 let normalized_canon_str = comparable_path_string(&normalized_canon);
                 ok = ok || is_within_dir_string(&base_canon_str, &normalized_canon_str);
             }
@@ -414,16 +415,17 @@ fn strip_verbatim_prefix(path: &Path) -> PathBuf {
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
-    path.components().fold(PathBuf::new(), |mut normalized, component| {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
+    path.components()
+        .fold(PathBuf::new(), |mut normalized, component| {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    normalized.pop();
+                }
+                _ => normalized.push(component.as_os_str()),
             }
-            _ => normalized.push(component.as_os_str()),
-        }
-        normalized
-    })
+            normalized
+        })
 }
 
 fn looks_like_path(path: &Path) -> bool {
@@ -431,15 +433,16 @@ fn looks_like_path(path: &Path) -> bool {
         return true;
     }
     let (count, seen_dot) =
-        path.components().fold((0usize, false), |(count, seen_dot), component| {
-            let count = count + 1;
-            let seen_dot = seen_dot
-                || matches!(
-                    component,
-                    std::path::Component::CurDir | std::path::Component::ParentDir
-                );
-            (count, seen_dot)
-        });
+        path.components()
+            .fold((0usize, false), |(count, seen_dot), component| {
+                let count = count + 1;
+                let seen_dot = seen_dot
+                    || matches!(
+                        component,
+                        std::path::Component::CurDir | std::path::Component::ParentDir
+                    );
+                (count, seen_dot)
+            });
     seen_dot || count > 1
 }
 
@@ -449,7 +452,13 @@ mod tests {
 
     #[test]
     fn sanitize_rejects_shell_operators() {
-        let samples = ["echo a && b", "echo a; b", "echo a | b", "echo $(a)", "`echo a`"];
+        let samples = [
+            "echo a && b",
+            "echo a; b",
+            "echo a | b",
+            "echo $(a)",
+            "`echo a`",
+        ];
         samples.iter().for_each(|input| {
             let result = ShellCommandParser::sanitize_args(input);
             assert_eq!(result, Err(ShellCommandError::ForbiddenOperator));

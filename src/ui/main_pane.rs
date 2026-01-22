@@ -320,8 +320,6 @@ mod tests {
         assert!(style.add_modifier.contains(Modifier::DIM));
     }
 
-
-
     #[test]
     fn render_search_footer_in_current_panel() {
         let backend = TestBackend::new(24, 6);
@@ -335,7 +333,16 @@ mod tests {
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
-                render_entry_list(frame, area, &entries, Some(0), "current", "al", &theme, true)
+                render_entry_list(
+                    frame,
+                    area,
+                    &entries,
+                    Some(0),
+                    "current",
+                    "al",
+                    &theme,
+                    true,
+                )
             })
             .unwrap();
 
@@ -357,7 +364,16 @@ mod tests {
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
-                render_entry_list(frame, area, &entries, Some(0), "current", "al", &theme, true)
+                render_entry_list(
+                    frame,
+                    area,
+                    &entries,
+                    Some(0),
+                    "current",
+                    "al",
+                    &theme,
+                    true,
+                )
             })
             .unwrap();
 

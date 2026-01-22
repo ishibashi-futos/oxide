@@ -4,16 +4,16 @@ mod config;
 mod core;
 mod error;
 mod opener;
+mod self_update;
 mod tabs;
 mod ui;
 
-use crate::{app::App, error::AppResult, opener::PlatformOpener};
 use crate::cli::{
     Command, parse_args, parse_self_update_args, render_error, self_update_intro,
     self_update_latest_plan, self_update_tag_plan, usage,
 };
-use crate::core::self_update::{download_and_verify_asset, replace_current_exe};
-use crate::core::self_update::SystemVersionEnv;
+use crate::self_update::{SelfUpdateService, SystemVersionEnv, UpdateDecision};
+use crate::{app::App, error::AppResult, opener::PlatformOpener};
 
 fn main() -> AppResult<()> {
     let command = match parse_args(std::env::args()) {
@@ -69,10 +69,12 @@ fn main() -> AppResult<()> {
                         }
                     };
                     println!("{}", plan.line);
-                    if matches!(plan.decision, crate::core::self_update::UpdateDecision::UpToDate) {
+                    if matches!(plan.decision, UpdateDecision::UpToDate) {
                         return Ok(());
                     }
-                    if plan.asset.is_none() {
+                    let asset = if let Some(asset) = plan.asset.as_ref() {
+                        asset
+                    } else {
                         eprintln!(
                             "error: {}",
                             render_error(&crate::cli::CliError::UpdateFailed(
@@ -80,7 +82,7 @@ fn main() -> AppResult<()> {
                             ))
                         );
                         return Ok(());
-                    }
+                    };
                     let confirmed = if parsed.yes {
                         true
                     } else {
@@ -93,19 +95,30 @@ fn main() -> AppResult<()> {
                         println!("self-update: cancelled");
                         return Ok(());
                     }
-                    let asset = plan.asset.as_ref().expect("asset exists");
-                    match download_and_verify_asset(asset) {
-                        Ok(path) => match replace_current_exe(&path, &plan.target_tag) {
-                            Ok(backup) => {
-                                println!("self-update: updated (backup: {})", backup.display());
+                    match SelfUpdateService::download_asset(asset) {
+                        Ok(path) => {
+                            match SelfUpdateService::replace_current(&path, &plan.target_tag) {
+                                Ok(backup) => {
+                                    println!("self-update: updated (backup: {})", backup.display());
+                                }
+                                Err(error) => {
+                                    eprintln!(
+                                        "error: {}",
+                                        render_error(&crate::cli::CliError::UpdateFailed(
+                                            error.to_string()
+                                        ))
+                                    );
+                                    return Ok(());
+                                }
                             }
-                            Err(error) => {
-                                eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed(error.to_string())));
-                                return Ok(());
-                            }
-                        },
+                        }
                         Err(error) => {
-                            eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed(error.to_string())));
+                            eprintln!(
+                                "error: {}",
+                                render_error(&crate::cli::CliError::UpdateFailed(
+                                    error.to_string()
+                                ))
+                            );
                             return Ok(());
                         }
                     }
@@ -119,11 +132,15 @@ fn main() -> AppResult<()> {
             Ok(())
         }
         Command::SelfUpdateRollback { yes } => {
-            let current_exe = std::env::current_exe()?;
-            match crate::core::self_update::list_backups(&current_exe) {
+            match SelfUpdateService::list_backups() {
                 Ok(backups) => {
                     if backups.is_empty() {
-                        eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed("no backups found".to_string())));
+                        eprintln!(
+                            "error: {}",
+                            render_error(&crate::cli::CliError::UpdateFailed(
+                                "no backups found".to_string()
+                            ))
+                        );
                         return Ok(());
                     }
                     println!("self-update: backups");
@@ -139,22 +156,35 @@ fn main() -> AppResult<()> {
                         input.trim().parse::<usize>().unwrap_or(0)
                     };
                     if selection == 0 || selection > backups.len() {
-                        eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed("invalid selection".to_string())));
+                        eprintln!(
+                            "error: {}",
+                            render_error(&crate::cli::CliError::UpdateFailed(
+                                "invalid selection".to_string()
+                            ))
+                        );
                         return Ok(());
                     }
                     let backup = &backups[selection - 1];
-                    match crate::core::self_update::rollback_named(backup) {
+                    match SelfUpdateService::rollback(backup) {
                         Ok(path) => {
                             println!("self-update: rolled back from {}", path.display());
                         }
                         Err(error) => {
-                            eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed(error.to_string())));
+                            eprintln!(
+                                "error: {}",
+                                render_error(&crate::cli::CliError::UpdateFailed(
+                                    error.to_string()
+                                ))
+                            );
                             return Ok(());
                         }
                     }
                 }
                 Err(error) => {
-                    eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed(error.to_string())));
+                    eprintln!(
+                        "error: {}",
+                        render_error(&crate::cli::CliError::UpdateFailed(error.to_string()))
+                    );
                     return Ok(());
                 }
             }

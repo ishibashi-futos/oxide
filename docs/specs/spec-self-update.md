@@ -47,10 +47,17 @@ CI/CD と連携し、ユーザーが常に最新の改善を享受できるよ�
 - `sha256sums` が存在しない Release では警告し、`--force-checksum` のようなオプションか `--insecure-checksum` （危険）を使うまで継続しない。
 
 ### 3.2 原子的な置き換え (Atomic Replacement)
+
 - `current_exe()` を得て、そのあるディレクトリに `ox-v<current>` を作成し、`std::fs::copy` か `rename` で退避。
-- ダウンロード済みバイナリを `ox.new` などに移し、`std::fs::rename` で `ox` と入れ替える。Windows では `.exe` ロックに注意し、必要なら `replace_file` 風処理。
+- ダウンロード済みバイナリを `ox.new` などに移し、`std::fs::rename` で `ox` と入れ替える。
 - 置き換え後は権限を維持し（`chmod +x`）、一時ファイルを削除。失敗したら元バイナリとバックアップを継続させる。
 - `SelfUpdateStatus::Updated(old, new)` を TUI に送る。
+
+#### Windows 特有の処理 (Move-away方式)
+Windows では実行中のバイナリを上書き・削除できないため、以下の手順を採用する。
+
+1. **退避**: 実行中の `ox.exe` を `ox-old.exe` (またはバージョン付きバックアップ名) にリネームする。実行中でもリネームは可能。
+2. **配置**: 新しいバイナリ `ox.new` を `ox.exe` にリネームする。
 
 ## 4. 安全性とリカバリ
 
@@ -93,7 +100,7 @@ CI/CD と連携し、ユーザーが常に最新の改善を享受できるよ�
 - [ ] `TLS/CA` を実装する。
 - [ ] `--insecure` を実装する。
 - [ ] `--offline` を実装する。
-- [ ] Windowsの置換手順を明確にし、必要なら専用処理を入れる。
+- [x] Windowsの置換手順を明確にし、必要なら専用処理を入れる。 (Move-away方式を採用)
 - [ ] `--force` などの強制更新・チェックサム例外の設計を詰める。
 
 ## 7. self-update処理の構成分離

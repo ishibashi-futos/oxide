@@ -1,7 +1,6 @@
-use crate::core::self_update::{
-    GitHubAsset, GitHubRelease, SelfUpdateError, UpdateDecision, VersionEnv,
-    current_target_triple, current_version, current_version_tag, decide_update,
-    latest_release_info, parse_version_tag, select_target_asset, select_release_by_tag,
+use crate::self_update::{
+    GitHubAsset, SelfUpdateConfig, SelfUpdateError, SelfUpdatePlan, SelfUpdateService,
+    UpdateDecision, VersionEnv, current_target_triple, current_version_tag,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +23,6 @@ pub enum CliError {
     UnknownCommand(String),
     UnknownOption(String),
     MissingValue(String),
-    InvalidVersion(String),
     UpdateFailed(String),
 }
 
@@ -61,7 +59,6 @@ pub fn render_error(error: &CliError) -> String {
         CliError::UnknownCommand(command) => format!("unknown command: {command}"),
         CliError::UnknownOption(option) => format!("unknown option: {option}"),
         CliError::MissingValue(option) => format!("missing value for {option}"),
-        CliError::InvalidVersion(label) => format!("invalid version: {label}"),
         CliError::UpdateFailed(message) => format!("update failed: {message}"),
     }
 }
@@ -93,11 +90,15 @@ pub fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateArgs, CliErro
             other => return Err(CliError::UnknownOption(other.to_string())),
         }
     }
-    Ok(SelfUpdateArgs { tag, prerelease, yes })
+    Ok(SelfUpdateArgs {
+        tag,
+        prerelease,
+        yes,
+    })
 }
 
 #[derive(Debug)]
-pub struct SelfUpdatePlan {
+pub struct SelfUpdatePlanSummary {
     pub line: String,
     pub decision: UpdateDecision,
     pub asset: Option<GitHubAsset>,
@@ -109,12 +110,11 @@ pub fn self_update_latest_plan(
     cargo_version: &str,
     repo: &str,
     args: &SelfUpdateArgs,
-) -> Result<SelfUpdatePlan, CliError> {
-    let current = current_version(env, cargo_version)
-        .map_err(|_| CliError::InvalidVersion("current".to_string()))?;
-    let (release, target) = latest_release_info(repo, args.prerelease).map_err(map_update_error)?;
-    let decision = decide_update(&current, &target.version);
-    Ok(build_plan(current, decision, &target.tag, &release))
+) -> Result<SelfUpdatePlanSummary, CliError> {
+    let config = SelfUpdateConfig::new(repo, args.prerelease);
+    let plan =
+        SelfUpdateService::plan_latest(&config, env, cargo_version).map_err(map_update_error)?;
+    Ok(build_plan_summary(plan))
 }
 
 fn map_update_error(error: SelfUpdateError) -> CliError {
@@ -128,39 +128,40 @@ fn digest_status(digest: Option<&str>) -> String {
     }
 }
 
-fn build_plan(
-    current: semver::Version,
-    decision: UpdateDecision,
-    target_tag: &str,
-    release: &GitHubRelease,
-) -> SelfUpdatePlan {
-    let summary = match decision {
+fn build_plan_summary(plan: SelfUpdatePlan) -> SelfUpdatePlanSummary {
+    let summary = match plan.decision {
         UpdateDecision::UpdateAvailable => "update available",
         UpdateDecision::Downgrade => "downgrade",
         UpdateDecision::UpToDate => "up-to-date",
     };
-    let mut line = format!("self-update: {summary} ({current} -> {target_tag})");
-    let asset = if let Some(triple) = current_target_triple() {
-        let asset = select_target_asset(release, triple);
-        match asset {
-            Some(asset) => {
-                line.push_str(&format!(" | asset: {}", asset.name));
-                line.push_str(&format!(" | digest: {}", digest_status(asset.digest.as_deref())));
+    let mut line = format!(
+        "self-update: {summary} ({} -> {})",
+        plan.current,
+        plan.target_tag()
+    );
+    let mut asset = None;
+    if let Some(triple) = current_target_triple() {
+        match plan.asset_for_target(triple) {
+            Some(found) => {
+                line.push_str(&format!(" | asset: {}", found.name));
+                line.push_str(&format!(
+                    " | digest: {}",
+                    digest_status(found.digest.as_deref())
+                ));
+                asset = Some(found.clone());
             }
             None => {
                 line.push_str(&format!(" | asset: not found for {triple}"));
             }
         }
-        asset.cloned()
     } else {
         line.push_str(" | asset: unknown target");
-        None
-    };
-    SelfUpdatePlan {
+    }
+    SelfUpdatePlanSummary {
         line,
-        decision,
+        decision: plan.decision,
         asset,
-        target_tag: target_tag.to_string(),
+        target_tag: plan.target_tag().to_string(),
     }
 }
 
@@ -170,19 +171,11 @@ pub fn self_update_tag_plan(
     repo: &str,
     tag: &str,
     allow_prerelease: bool,
-) -> Result<SelfUpdatePlan, CliError> {
-    let current = current_version(env, cargo_version)
-        .map_err(|_| CliError::InvalidVersion("current".to_string()))?;
-    let releases = crate::core::self_update::fetch_releases(repo).map_err(map_update_error)?;
-    let release = select_release_by_tag(&releases, tag)
-        .ok_or_else(|| CliError::UpdateFailed("release not found".to_string()))?;
-    if !allow_prerelease && release.prerelease {
-        return Err(CliError::UpdateFailed("prerelease disabled".to_string()));
-    }
-    let target = parse_version_tag(&release.tag_name)
-        .map_err(|_| CliError::InvalidVersion(release.tag_name.clone()))?;
-    let decision = decide_update(&current, &target);
-    Ok(build_plan(current, decision, &release.tag_name, &release))
+) -> Result<SelfUpdatePlanSummary, CliError> {
+    let config = SelfUpdateConfig::new(repo, allow_prerelease);
+    let plan =
+        SelfUpdateService::plan_tag(&config, env, cargo_version, tag).map_err(map_update_error)?;
+    Ok(build_plan_summary(plan))
 }
 
 #[cfg(test)]
@@ -358,7 +351,6 @@ mod tests {
             }
         );
     }
-
 
     #[derive(Debug)]
     struct FakeEnv {

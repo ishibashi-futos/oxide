@@ -97,10 +97,7 @@ mod tests {
     fn parse_config_reads_default_theme() {
         let config = parse_config("default_theme = \"Glacier Coast\"");
 
-        assert_eq!(
-            config.default_theme,
-            Some(ColorThemeId::GlacierCoast)
-        );
+        assert_eq!(config.default_theme, Some(ColorThemeId::GlacierCoast));
     }
 
     #[test]
