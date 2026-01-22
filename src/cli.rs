@@ -1,6 +1,7 @@
 use crate::core::self_update::{
     SelfUpdateError, UpdateDecision, VersionEnv, current_target_triple, current_version,
-    current_version_tag, decide_update, latest_release_info, parse_version_tag, select_asset_name,
+    current_version_tag, decide_update, latest_release_info, parse_version_tag,
+    select_target_asset,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,8 +124,12 @@ pub fn self_update_latest_decision_line(
     };
     let mut line = format!("self-update: {summary} ({current} -> {})", target.tag);
     if let Some(triple) = current_target_triple() {
-        if let Some(asset) = select_asset_name(&release, triple) {
-            line.push_str(&format!(" | asset: {asset}"));
+        if let Some(asset) = select_target_asset(&release, triple) {
+            line.push_str(&format!(" | asset: {}", asset.name));
+            line.push_str(&format!(
+                " | digest: {}",
+                digest_status(asset.digest.as_deref())
+            ));
         } else {
             line.push_str(&format!(" | asset: not found for {triple}"));
         }
@@ -136,6 +141,13 @@ pub fn self_update_latest_decision_line(
 
 fn map_update_error(error: SelfUpdateError) -> CliError {
     CliError::UpdateFailed(error.to_string())
+}
+
+fn digest_status(digest: Option<&str>) -> String {
+    match digest {
+        Some(value) => value.to_string(),
+        None => "missing digest".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -187,6 +199,13 @@ mod tests {
         let message = render_error(&error);
 
         assert_eq!(message, "update failed: rate limited");
+    }
+
+    #[test]
+    fn digest_status_reports_missing_digest() {
+        let status = digest_status(None);
+
+        assert_eq!(status, "missing digest");
     }
 
     #[test]

@@ -20,6 +20,9 @@ pub struct GitHubRelease {
 #[derive(Debug, Clone)]
 pub struct GitHubAsset {
     pub name: String,
+    #[allow(dead_code)]
+    pub download_url: Option<String>,
+    pub digest: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,8 +176,18 @@ pub fn parse_releases_json(body: &str) -> Result<Vec<GitHubRelease>, SelfUpdateE
                 let Some(name) = asset.get("name").and_then(|value| value.as_str()) else {
                     continue;
                 };
+                let download_url = asset
+                    .get("browser_download_url")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string());
+                let digest = asset
+                    .get("digest")
+                    .and_then(|value| value.as_str())
+                    .and_then(normalize_digest);
                 assets.push(GitHubAsset {
                     name: name.to_string(),
+                    download_url,
+                    digest,
                 });
             }
         }
@@ -225,12 +238,42 @@ pub fn current_target_triple() -> Option<&'static str> {
 }
 
 pub fn select_asset_name(release: &GitHubRelease, target: &str) -> Option<String> {
-    let expected = format!("ox-{target}-{}", release.tag_name);
-    release
-        .assets
-        .iter()
-        .find(|asset| asset.name == expected || asset.name.starts_with(&expected))
-        .map(|asset| asset.name.clone())
+    select_target_asset(release, target).map(|asset| asset.name.clone())
+}
+
+pub fn select_target_asset<'a>(
+    release: &'a GitHubRelease,
+    target: &str,
+) -> Option<&'a GitHubAsset> {
+    let expected_with_tag = format!("ox-{target}-{}", release.tag_name);
+    let expected_no_tag = format!("ox-{target}");
+    release.assets.iter().max_by_key(|asset| {
+        if asset.name == expected_with_tag || asset.name.starts_with(&expected_with_tag) {
+            2
+        } else if asset.name == expected_no_tag || asset.name.starts_with(&expected_no_tag) {
+            1
+        } else {
+            0
+        }
+    }).and_then(|asset| {
+        if asset.name == expected_with_tag
+            || asset.name.starts_with(&expected_with_tag)
+            || asset.name == expected_no_tag
+            || asset.name.starts_with(&expected_no_tag)
+        {
+            Some(asset)
+        } else {
+            None
+        }
+    })
+}
+
+pub fn normalize_digest(digest: &str) -> Option<String> {
+    let trimmed = digest.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 #[cfg(test)]
@@ -391,9 +434,13 @@ mod tests {
             assets: vec![
                 GitHubAsset {
                     name: "ox-x86_64-unknown-linux-gnu-v1.2.3".to_string(),
+                    download_url: None,
+                    digest: None,
                 },
                 GitHubAsset {
                     name: "readme.txt".to_string(),
+                    download_url: None,
+                    digest: None,
                 },
             ],
         };
@@ -401,6 +448,38 @@ mod tests {
         let asset = select_asset_name(&release, "x86_64-unknown-linux-gnu").unwrap();
 
         assert_eq!(asset, "ox-x86_64-unknown-linux-gnu-v1.2.3");
+    }
+
+    #[test]
+    fn select_asset_name_falls_back_to_target_only() {
+        let release = GitHubRelease {
+            tag_name: "v1.2.3".to_string(),
+            prerelease: false,
+            draft: false,
+            assets: vec![
+                GitHubAsset {
+                    name: "ox-x86_64-unknown-linux-gnu.tar.gz".to_string(),
+                    download_url: None,
+                    digest: None,
+                },
+                GitHubAsset {
+                    name: "readme.txt".to_string(),
+                    download_url: None,
+                    digest: None,
+                },
+            ],
+        };
+
+        let asset = select_asset_name(&release, "x86_64-unknown-linux-gnu").unwrap();
+
+        assert_eq!(asset, "ox-x86_64-unknown-linux-gnu.tar.gz");
+    }
+
+    #[test]
+    fn normalize_digest_strips_whitespace() {
+        let digest = normalize_digest(" sha256:abcd ");
+
+        assert_eq!(digest, Some("sha256:abcd".to_string()));
     }
 
     #[test]
