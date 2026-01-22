@@ -21,6 +21,7 @@ pub struct PreviewRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewReady {
     pub id: u64,
+    pub path: PathBuf,
     pub lines: Vec<String>,
     pub truncated: bool,
     pub reason: Option<String>,

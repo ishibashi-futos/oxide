@@ -393,6 +393,7 @@ fn draw(
                     lines: &ready.lines,
                     reason: ready.reason.clone(),
                     truncated: ready.truncated,
+                    path: ready.path.as_path(),
                 },
                 PreviewState::Failed(failed) => PreviewPaneState::Failed {
                     reason: preview_error_text(failed),

@@ -20,7 +20,7 @@ impl PreviewWorker {
                 let _ = result_tx.send(PreviewEvent::Loading { id: request.id });
                 match load_preview(&request.path, request.max_bytes) {
                     Ok(content) => {
-                        let ready = build_ready(request.id, content);
+                        let ready = build_ready(&request, content);
                         let _ = result_tx.send(PreviewEvent::Ready(ready));
                     }
                     Err(reason) => {
@@ -49,9 +49,10 @@ impl PreviewWorker {
     }
 }
 
-fn build_ready(id: u64, content: PreviewContent) -> PreviewReady {
+fn build_ready(request: &PreviewRequest, content: PreviewContent) -> PreviewReady {
     PreviewReady {
-        id,
+        id: request.id,
+        path: request.path.clone(),
         lines: content.lines,
         truncated: content.truncated,
         reason: content.reason,
