@@ -1,7 +1,7 @@
 use crate::core::self_update::{
-    SelfUpdateError, UpdateDecision, VersionEnv, current_target_triple, current_version,
-    current_version_tag, decide_update, download_and_verify_asset, latest_release_info,
-    parse_version_tag, select_target_asset,
+    GitHubAsset, GitHubRelease, SelfUpdateError, UpdateDecision, VersionEnv,
+    current_target_triple, current_version, current_version_tag, decide_update,
+    latest_release_info, parse_version_tag, select_target_asset, select_release_by_tag,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9,15 +9,14 @@ pub enum Command {
     RunTui,
     Version,
     SelfUpdate { args: Vec<String> },
-    SelfUpdateRollback,
+    SelfUpdateRollback { yes: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelfUpdateArgs {
     pub tag: Option<String>,
     pub prerelease: bool,
-    pub download: bool,
-    pub apply: bool,
+    pub yes: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,7 +42,8 @@ where
         "self-update" => {
             let args: Vec<String> = iter.collect();
             if args.first().map(|value| value.as_str()) == Some("rollback") {
-                Ok(Command::SelfUpdateRollback)
+                let yes = args.iter().any(|value| value == "--yes" || value == "-y");
+                Ok(Command::SelfUpdateRollback { yes })
             } else {
                 Ok(Command::SelfUpdate { args })
             }
@@ -74,8 +74,7 @@ pub fn self_update_intro(env: &dyn VersionEnv, cargo_version: &str) -> String {
 pub fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateArgs, CliError> {
     let mut tag = None;
     let mut prerelease = true;
-    let mut download = false;
-    let mut apply = false;
+    let mut yes = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -88,21 +87,13 @@ pub fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateArgs, CliErro
             "--prerelease" => {
                 prerelease = true;
             }
-            "--download" => {
-                download = true;
-            }
-            "--apply" => {
-                apply = true;
+            "--yes" | "-y" => {
+                yes = true;
             }
             other => return Err(CliError::UnknownOption(other.to_string())),
         }
     }
-    Ok(SelfUpdateArgs {
-        tag,
-        prerelease,
-        download,
-        apply,
-    })
+    Ok(SelfUpdateArgs { tag, prerelease, yes })
 }
 
 pub fn self_update_decision_line(
@@ -128,56 +119,25 @@ pub fn self_update_decision_line(
     )))
 }
 
-pub fn self_update_latest_decision_line(
+#[derive(Debug)]
+pub struct SelfUpdatePlan {
+    pub line: String,
+    pub decision: UpdateDecision,
+    pub asset: Option<GitHubAsset>,
+    pub target_tag: String,
+}
+
+pub fn self_update_latest_plan(
     env: &dyn VersionEnv,
     cargo_version: &str,
     repo: &str,
     args: &SelfUpdateArgs,
-) -> Result<Option<String>, CliError> {
+) -> Result<SelfUpdatePlan, CliError> {
     let current = current_version(env, cargo_version)
         .map_err(|_| CliError::InvalidVersion("current".to_string()))?;
     let (release, target) = latest_release_info(repo, args.prerelease).map_err(map_update_error)?;
     let decision = decide_update(&current, &target.version);
-    let summary = match decision {
-        UpdateDecision::UpdateAvailable => "update available",
-        UpdateDecision::Downgrade => "downgrade",
-        UpdateDecision::UpToDate => "up-to-date",
-    };
-    let mut line = format!("self-update: {summary} ({current} -> {})", target.tag);
-    if let Some(triple) = current_target_triple() {
-        if let Some(asset) = select_target_asset(&release, triple) {
-            line.push_str(&format!(" | asset: {}", asset.name));
-            line.push_str(&format!(" | digest: {}", digest_status(asset.digest.as_deref())));
-            if args.download || args.apply {
-                match download_and_verify_asset(asset) {
-                    Ok(path) => {
-                        line.push_str(&format!(" | verified: {}", path.display()));
-                        if args.apply {
-                            match crate::core::self_update::replace_current_exe(
-                                &path,
-                                &target.tag,
-                            ) {
-                                Ok(backup) => {
-                                    line.push_str(&format!(" | backup: {}", backup.display()));
-                                }
-                                Err(error) => {
-                                    return Err(map_update_error(error));
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        return Err(map_update_error(error));
-                    }
-                }
-            }
-        } else {
-            line.push_str(&format!(" | asset: not found for {triple}"));
-        }
-    } else {
-        line.push_str(" | asset: unknown target");
-    }
-    Ok(Some(line))
+    Ok(build_plan(current, decision, &target.tag, &release))
 }
 
 fn map_update_error(error: SelfUpdateError) -> CliError {
@@ -189,6 +149,63 @@ fn digest_status(digest: Option<&str>) -> String {
         Some(value) => value.to_string(),
         None => "missing digest".to_string(),
     }
+}
+
+fn build_plan(
+    current: semver::Version,
+    decision: UpdateDecision,
+    target_tag: &str,
+    release: &GitHubRelease,
+) -> SelfUpdatePlan {
+    let summary = match decision {
+        UpdateDecision::UpdateAvailable => "update available",
+        UpdateDecision::Downgrade => "downgrade",
+        UpdateDecision::UpToDate => "up-to-date",
+    };
+    let mut line = format!("self-update: {summary} ({current} -> {target_tag})");
+    let asset = if let Some(triple) = current_target_triple() {
+        let asset = select_target_asset(release, triple);
+        match asset {
+            Some(asset) => {
+                line.push_str(&format!(" | asset: {}", asset.name));
+                line.push_str(&format!(" | digest: {}", digest_status(asset.digest.as_deref())));
+            }
+            None => {
+                line.push_str(&format!(" | asset: not found for {triple}"));
+            }
+        }
+        asset.cloned()
+    } else {
+        line.push_str(" | asset: unknown target");
+        None
+    };
+    SelfUpdatePlan {
+        line,
+        decision,
+        asset,
+        target_tag: target_tag.to_string(),
+    }
+}
+
+pub fn self_update_tag_plan(
+    env: &dyn VersionEnv,
+    cargo_version: &str,
+    repo: &str,
+    tag: &str,
+    allow_prerelease: bool,
+) -> Result<SelfUpdatePlan, CliError> {
+    let current = current_version(env, cargo_version)
+        .map_err(|_| CliError::InvalidVersion("current".to_string()))?;
+    let releases = crate::core::self_update::fetch_releases(repo).map_err(map_update_error)?;
+    let release = select_release_by_tag(&releases, tag)
+        .ok_or_else(|| CliError::UpdateFailed("release not found".to_string()))?;
+    if !allow_prerelease && release.prerelease {
+        return Err(CliError::UpdateFailed("prerelease disabled".to_string()));
+    }
+    let target = parse_version_tag(&release.tag_name)
+        .map_err(|_| CliError::InvalidVersion(release.tag_name.clone()))?;
+    let decision = decide_update(&current, &target);
+    Ok(build_plan(current, decision, &release.tag_name, &release))
 }
 
 #[cfg(test)]
@@ -235,7 +252,20 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(command, Command::SelfUpdateRollback);
+        assert_eq!(command, Command::SelfUpdateRollback { yes: false });
+    }
+
+    #[test]
+    fn parse_args_reads_self_update_rollback_yes() {
+        let command = parse_args(vec![
+            "ox".to_string(),
+            "self-update".to_string(),
+            "rollback".to_string(),
+            "--yes".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(command, Command::SelfUpdateRollback { yes: true });
     }
 
     #[test]
@@ -290,8 +320,7 @@ mod tests {
             SelfUpdateArgs {
                 tag: Some("v1.2.3".to_string()),
                 prerelease: true,
-                download: false,
-                apply: false,
+                yes: false,
             }
         );
     }
@@ -311,8 +340,7 @@ mod tests {
         let args = SelfUpdateArgs {
             tag: Some("v1.1.0".to_string()),
             prerelease: false,
-            download: false,
-            apply: false,
+            yes: false,
         };
 
         let line = self_update_decision_line(&env, "0.1.0", &args).unwrap();
@@ -331,8 +359,7 @@ mod tests {
             SelfUpdateArgs {
                 tag: None,
                 prerelease: true,
-                download: false,
-                apply: false,
+                yes: false,
             }
         );
     }
@@ -348,15 +375,14 @@ mod tests {
             SelfUpdateArgs {
                 tag: None,
                 prerelease: true,
-                download: false,
-                apply: false,
+                yes: false,
             }
         );
     }
 
     #[test]
-    fn parse_self_update_args_accepts_download() {
-        let args = vec!["--download".to_string()];
+    fn parse_self_update_args_accepts_yes() {
+        let args = vec!["--yes".to_string()];
 
         let parsed = parse_self_update_args(&args).unwrap();
 
@@ -365,28 +391,11 @@ mod tests {
             SelfUpdateArgs {
                 tag: None,
                 prerelease: true,
-                download: true,
-                apply: false,
+                yes: true,
             }
         );
     }
 
-    #[test]
-    fn parse_self_update_args_accepts_apply() {
-        let args = vec!["--apply".to_string()];
-
-        let parsed = parse_self_update_args(&args).unwrap();
-
-        assert_eq!(
-            parsed,
-            SelfUpdateArgs {
-                tag: None,
-                prerelease: true,
-                download: false,
-                apply: true,
-            }
-        );
-    }
 
     #[derive(Debug)]
     struct FakeEnv {

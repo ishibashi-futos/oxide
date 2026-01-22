@@ -9,9 +9,10 @@ mod ui;
 
 use crate::{app::App, error::AppResult, opener::PlatformOpener};
 use crate::cli::{
-    Command, parse_args, parse_self_update_args, render_error, self_update_decision_line,
-    self_update_latest_decision_line, self_update_intro, usage,
+    Command, parse_args, parse_self_update_args, render_error, self_update_intro,
+    self_update_latest_plan, self_update_tag_plan, usage,
 };
+use crate::core::self_update::{download_and_verify_asset, replace_current_exe};
 use crate::core::self_update::SystemVersionEnv;
 
 fn main() -> AppResult<()> {
@@ -39,29 +40,73 @@ fn main() -> AppResult<()> {
             println!("{}", self_update_intro(&env, env!("CARGO_PKG_VERSION")));
             match parse_self_update_args(&args) {
                 Ok(parsed) => {
-                    if let Some(tag) = parsed.tag.as_ref() {
-                        match self_update_decision_line(&env, env!("CARGO_PKG_VERSION"), &parsed) {
-                            Ok(Some(line)) => println!("{line}"),
-                            Ok(None) => {}
+                    let plan = if let Some(tag) = parsed.tag.as_ref() {
+                        match self_update_tag_plan(
+                            &env,
+                            env!("CARGO_PKG_VERSION"),
+                            "ishibashi-futos/oxide",
+                            tag,
+                            parsed.prerelease,
+                        ) {
+                            Ok(plan) => plan,
                             Err(error) => {
                                 eprintln!("error: {}", render_error(&error));
                                 return Ok(());
                             }
                         }
-                        println!("self-update: target tag {tag}");
                     } else {
-                        match self_update_latest_decision_line(
+                        match self_update_latest_plan(
                             &env,
                             env!("CARGO_PKG_VERSION"),
                             "ishibashi-futos/oxide",
                             &parsed,
                         ) {
-                            Ok(Some(line)) => println!("{line}"),
-                            Ok(None) => {}
+                            Ok(plan) => plan,
                             Err(error) => {
                                 eprintln!("error: {}", render_error(&error));
                                 return Ok(());
                             }
+                        }
+                    };
+                    println!("{}", plan.line);
+                    if matches!(plan.decision, crate::core::self_update::UpdateDecision::UpToDate) {
+                        return Ok(());
+                    }
+                    if plan.asset.is_none() {
+                        eprintln!(
+                            "error: {}",
+                            render_error(&crate::cli::CliError::UpdateFailed(
+                                "asset not found".to_string()
+                            ))
+                        );
+                        return Ok(());
+                    }
+                    let confirmed = if parsed.yes {
+                        true
+                    } else {
+                        println!("Do you want to update? [y/N]");
+                        let mut input = String::new();
+                        std::io::stdin().read_line(&mut input)?;
+                        matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+                    };
+                    if !confirmed {
+                        println!("self-update: cancelled");
+                        return Ok(());
+                    }
+                    let asset = plan.asset.as_ref().expect("asset exists");
+                    match download_and_verify_asset(asset) {
+                        Ok(path) => match replace_current_exe(&path, &plan.target_tag) {
+                            Ok(backup) => {
+                                println!("self-update: updated (backup: {})", backup.display());
+                            }
+                            Err(error) => {
+                                eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed(error.to_string())));
+                                return Ok(());
+                            }
+                        },
+                        Err(error) => {
+                            eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed(error.to_string())));
+                            return Ok(());
                         }
                     }
                 }
@@ -74,7 +119,7 @@ fn main() -> AppResult<()> {
             println!("self-update: not implemented yet");
             Ok(())
         }
-        Command::SelfUpdateRollback => {
+        Command::SelfUpdateRollback { yes } => {
             let current_exe = std::env::current_exe()?;
             match crate::core::self_update::list_backups(&current_exe) {
                 Ok(backups) => {
@@ -86,10 +131,14 @@ fn main() -> AppResult<()> {
                     for (index, path) in backups.iter().enumerate() {
                         println!("  [{}] {}", index + 1, path.display());
                     }
-                    println!("Select backup number:");
-                    let mut input = String::new();
-                    std::io::stdin().read_line(&mut input)?;
-                    let selection = input.trim().parse::<usize>().unwrap_or(0);
+                    let selection = if yes {
+                        1
+                    } else {
+                        println!("Select backup number:");
+                        let mut input = String::new();
+                        std::io::stdin().read_line(&mut input)?;
+                        input.trim().parse::<usize>().unwrap_or(0)
+                    };
                     if selection == 0 || selection > backups.len() {
                         eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed("invalid selection".to_string())));
                         return Ok(());

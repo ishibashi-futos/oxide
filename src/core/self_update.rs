@@ -121,6 +121,16 @@ pub fn select_latest_release(
         .max_by(|left, right| left.version.cmp(&right.version))
 }
 
+pub fn select_release_by_tag<'a>(
+    releases: &'a [GitHubRelease],
+    tag: &str,
+) -> Option<GitHubRelease> {
+    releases
+        .iter()
+        .find(|release| release.tag_name == tag)
+        .cloned()
+}
+
 pub fn select_latest_release_info(
     releases: &[GitHubRelease],
     allow_prerelease: bool,
@@ -648,6 +658,28 @@ mod tests {
         let result = verify_sha256_digest(&path, &digest);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn select_release_by_tag_finds_match() {
+        let releases = vec![
+            GitHubRelease {
+                tag_name: "v0.1.0".to_string(),
+                prerelease: true,
+                draft: false,
+                assets: Vec::new(),
+            },
+            GitHubRelease {
+                tag_name: "v0.2.0".to_string(),
+                prerelease: true,
+                draft: false,
+                assets: Vec::new(),
+            },
+        ];
+
+        let release = select_release_by_tag(&releases, "v0.2.0").unwrap();
+
+        assert_eq!(release.tag_name, "v0.2.0");
     }
 
     #[test]
