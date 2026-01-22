@@ -54,6 +54,9 @@ pub enum SelfUpdateError {
     DigestMismatch,
     #[error("missing download url")]
     MissingDownloadUrl,
+    #[allow(dead_code)]
+    #[error("no backups found")]
+    NoBackupFound,
 }
 
 pub fn parse_version_tag(tag: &str) -> Result<Version, semver::Error> {
@@ -386,6 +389,29 @@ pub fn replace_current_exe(downloaded: &Path, version_tag: &str) -> Result<PathB
     }
     std::fs::rename(&temp, &current_exe)?;
     Ok(backup)
+}
+
+pub fn list_backups(current_exe: &Path) -> Result<Vec<PathBuf>, SelfUpdateError> {
+    let dir = current_exe.parent().unwrap_or_else(|| Path::new("."));
+    let mut backups = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if name.starts_with("ox-") {
+            backups.push(path);
+        }
+    }
+    backups.sort();
+    Ok(backups)
+}
+
+pub fn rollback_named(backup: &Path) -> Result<PathBuf, SelfUpdateError> {
+    let current_exe = std::env::current_exe()?;
+    std::fs::copy(backup, &current_exe)?;
+    Ok(backup.to_path_buf())
 }
 
 #[cfg(test)]

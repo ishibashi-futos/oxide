@@ -74,5 +74,43 @@ fn main() -> AppResult<()> {
             println!("self-update: not implemented yet");
             Ok(())
         }
+        Command::SelfUpdateRollback => {
+            let current_exe = std::env::current_exe()?;
+            match crate::core::self_update::list_backups(&current_exe) {
+                Ok(backups) => {
+                    if backups.is_empty() {
+                        eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed("no backups found".to_string())));
+                        return Ok(());
+                    }
+                    println!("self-update: backups");
+                    for (index, path) in backups.iter().enumerate() {
+                        println!("  [{}] {}", index + 1, path.display());
+                    }
+                    println!("Select backup number:");
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input)?;
+                    let selection = input.trim().parse::<usize>().unwrap_or(0);
+                    if selection == 0 || selection > backups.len() {
+                        eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed("invalid selection".to_string())));
+                        return Ok(());
+                    }
+                    let backup = &backups[selection - 1];
+                    match crate::core::self_update::rollback_named(backup) {
+                        Ok(path) => {
+                            println!("self-update: rolled back from {}", path.display());
+                        }
+                        Err(error) => {
+                            eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed(error.to_string())));
+                            return Ok(());
+                        }
+                    }
+                }
+                Err(error) => {
+                    eprintln!("error: {}", render_error(&crate::cli::CliError::UpdateFailed(error.to_string())));
+                    return Ok(());
+                }
+            }
+            Ok(())
+        }
     }
 }

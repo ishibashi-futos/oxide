@@ -9,6 +9,7 @@ pub enum Command {
     RunTui,
     Version,
     SelfUpdate { args: Vec<String> },
+    SelfUpdateRollback,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,9 +40,14 @@ where
     };
     match first.as_str() {
         "--version" | "-V" => Ok(Command::Version),
-        "self-update" => Ok(Command::SelfUpdate {
-            args: iter.collect(),
-        }),
+        "self-update" => {
+            let args: Vec<String> = iter.collect();
+            if args.first().map(|value| value.as_str()) == Some("rollback") {
+                Ok(Command::SelfUpdateRollback)
+            } else {
+                Ok(Command::SelfUpdate { args })
+            }
+        }
         other => Err(CliError::UnknownCommand(other.to_string())),
     }
 }
@@ -218,6 +224,18 @@ mod tests {
                 args: vec!["--yes".to_string()]
             }
         );
+    }
+
+    #[test]
+    fn parse_args_reads_self_update_rollback() {
+        let command = parse_args(vec![
+            "ox".to_string(),
+            "self-update".to_string(),
+            "rollback".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(command, Command::SelfUpdateRollback);
     }
 
     #[test]
