@@ -89,17 +89,18 @@ CI/CD と連携し、ユーザーが常に最新の改善を享受できるよ�
 
 ### TODO
 
-- [ ] self-updateの処理をにまとめ、CLI層との境界を明確にする。
+- [ ] self-updateの処理をにまとめ、TUIのUI/Coreとの境界を明確にする。
 - [ ] `TLS/CA` を実装する。
 - [ ] `--insecure` を実装する。
 - [ ] `--offline` を実装する。
 - [ ] Windowsの置換手順を明確にし、必要なら専用処理を入れる。
 - [ ] `--force` などの強制更新・チェックサム例外の設計を詰める。
 
-## 7. コアレイヤーの構成案
+## 7. self-update処理の構成分離
 
-- `src/self_update/` 以下にコア処理をまとめることで CLI/TUI に依存しない構造を目指す。
-- モジュール例として `config.rs` で `SelfUpdateConfig` を定義し、`service.rs` でライフサイクルを orchestrate する。
+- `src/self_update/` 以下にコア処理をまとめることで TUI に依存しない構造を目指す。
+- モジュール例として `config.rs` で `SelfUpdateConfig` を定義し、`service.rs` でライフサイクルを orchestrate
+ する。
 
 - `release.rs` で `ReleaseFinder` を置き、GitHub API、ターゲット選定、`needs_update` 判定を分離してテストしやすくする。
 - `download.rs` はアセット選別、ストリーミング、`sha256` 検証、`SelfUpdateStatus::Downloading` を扱い、進捗通知をトリガーする。
