@@ -2,6 +2,7 @@ mod entries;
 mod git;
 mod metadata;
 mod preview;
+pub mod self_update;
 mod shell;
 mod shell_worker;
 mod slash_command;
