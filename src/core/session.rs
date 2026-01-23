@@ -173,7 +173,10 @@ mod tests {
             .and_then(|tabs| tabs.as_array())
             .and_then(|tabs| tabs.first())
             .expect("tab");
-        assert_eq!(tab.get("theme").and_then(|v| v.as_str()), Some("Glacier Coast"));
+        assert_eq!(
+            tab.get("theme").and_then(|v| v.as_str()),
+            Some("Glacier Coast")
+        );
     }
 
     #[test]
