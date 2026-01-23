@@ -10,7 +10,7 @@ use crate::core::{
     list_entries, parse_slash_command, restore_start_dir, save_session_async,
 };
 use crate::error::{AppError, AppResult};
-use crate::tabs::{TabSummary, TabsState};
+use crate::tabs::{TabSummary, TabsEvent, TabsState};
 
 pub trait EntryOpener {
     fn open(&self, path: &Path) -> AppResult<()>;
@@ -303,7 +303,7 @@ impl App {
         self.tabs.push_new(self.current_dir.as_path());
         self.announce_active_tab_color();
         self.clear_search_state();
-        self.request_session_save();
+        self.handle_tab_events();
         Ok(())
     }
 
@@ -621,12 +621,8 @@ impl App {
 
     fn change_dir(&mut self, path: PathBuf) {
         self.set_current_dir(path);
-        self.store_active_tab();
-        self.request_session_save();
-    }
-
-    fn store_active_tab(&mut self) {
-        self.tabs.store_active(self.current_dir.as_path());
+        self.tabs.update_active_path(self.current_dir.as_path());
+        self.handle_tab_events();
     }
 
     fn switch_to_tab(&mut self, index: usize) -> AppResult<()> {
@@ -636,6 +632,7 @@ impl App {
         self.set_current_dir(next_dir);
         self.announce_active_tab_color();
         self.refresh()?;
+        self.handle_tab_events();
         Ok(())
     }
 
@@ -718,7 +715,7 @@ impl App {
             tab_id: preference.tab_id,
             theme,
         });
-        self.request_session_save();
+        self.handle_tab_events();
         match context {
             CommandContext::Tab(_) => {
                 self.timed_feedback(format!("theme: {}", theme.name), FeedbackStatus::Success)
@@ -755,10 +752,15 @@ impl App {
         }
     }
 
-    fn request_session_save(&mut self) {
-        self.store_active_tab();
-        let tabs = self.tabs.session_tabs();
-        save_session_async(tabs);
+    fn handle_tab_events(&mut self) {
+        let events = self.tabs.take_events();
+        if events.is_empty() {
+            return;
+        }
+        if events.iter().any(should_save_session) {
+            let tabs = self.tabs.session_tabs();
+            save_session_async(tabs);
+        }
     }
 
     fn slash_command_prefix(&self) -> Option<&str> {
@@ -946,6 +948,14 @@ fn format_slash_error(error: SlashCommandError) -> &'static str {
     match error {
         SlashCommandError::MissingSlash => "missing '/'",
         SlashCommandError::MissingName => "missing command",
+    }
+}
+
+fn should_save_session(event: &TabsEvent) -> bool {
+    match event {
+        TabsEvent::ActivePathChanged { .. }
+        | TabsEvent::ActiveThemeChanged { .. }
+        | TabsEvent::TabAdded { .. } => true,
     }
 }
 
