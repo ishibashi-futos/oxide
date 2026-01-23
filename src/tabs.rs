@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::core::ColorThemeId;
 
@@ -61,18 +61,18 @@ impl TabsState {
         self.active + 1
     }
 
-    pub(crate) fn store_active(&mut self, current_dir: &PathBuf) {
+    pub(crate) fn store_active(&mut self, current_dir: &Path) {
         if let Some(slot) = self.tabs.get_mut(self.active) {
-            slot.path = current_dir.clone();
+            slot.path = current_dir.to_path_buf();
         }
     }
 
-    pub(crate) fn push_new(&mut self, current_dir: &PathBuf) {
+    pub(crate) fn push_new(&mut self, current_dir: &Path) {
         self.store_active(current_dir);
         let theme_id = self.rotation.next();
         self.tabs.push(Tab {
             id: self.next_id,
-            path: current_dir.clone(),
+            path: current_dir.to_path_buf(),
             theme_id,
         });
         self.next_id = self.next_id.saturating_add(1);
@@ -97,7 +97,7 @@ impl TabsState {
         })
     }
 
-    pub(crate) fn switch_to(&mut self, index: usize, current_dir: &PathBuf) -> Option<PathBuf> {
+    pub(crate) fn switch_to(&mut self, index: usize, current_dir: &Path) -> Option<PathBuf> {
         if index >= self.tabs.len() {
             return None;
         }

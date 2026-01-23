@@ -8,61 +8,65 @@ use ratatui::{
 use crate::core::{ColorTheme, Entry};
 use crate::ui::theme::to_color;
 
-pub fn render_entry_list(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    entries: &[Entry],
-    cursor: Option<usize>,
-    title: &str,
-    search_text: &str,
-    theme: &ColorTheme,
-    active: bool,
-) {
-    let matches = search_matches(entries, search_text);
-    let items: Vec<ListItem> = entries
+pub struct EntryListParams<'a> {
+    pub entries: &'a [Entry],
+    pub cursor: Option<usize>,
+    pub title: &'a str,
+    pub search_text: &'a str,
+    pub theme: &'a ColorTheme,
+    pub active: bool,
+}
+
+pub fn render_entry_list(frame: &mut Frame<'_>, area: Rect, params: &EntryListParams<'_>) {
+    let matches = search_matches(params.entries, params.search_text);
+    let items: Vec<ListItem> = params
+        .entries
         .iter()
         .enumerate()
         .map(|(index, entry)| {
             let mut item = ListItem::new(display_name(entry));
             if matches.len() > 1 && matches.iter().skip(1).any(|&hit| hit == index) {
-                item = item.style(secondary_match_style(theme));
+                item = item.style(secondary_match_style(params.theme));
             }
             item
         })
         .collect();
 
-    let border_color = if active {
-        to_color(theme.base)
+    let border_color = if params.active {
+        to_color(params.theme.base)
     } else {
-        to_color(theme.grayscale.low)
+        to_color(params.theme.grayscale.low)
     };
-    let text_style = if active {
+    let text_style = if params.active {
         Style::default()
     } else {
         Style::default()
-            .fg(to_color(theme.grayscale.high))
+            .fg(to_color(params.theme.grayscale.high))
             .add_modifier(Modifier::DIM)
     };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(title)
+        .title(params.title)
         .style(Style::default().fg(border_color));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (list_area, footer_area) = split_list_and_footer(inner, !search_text.is_empty());
+    let (list_area, footer_area) = split_list_and_footer(inner, !params.search_text.is_empty());
     if list_area.height > 0 {
         let list = List::new(items)
-            .highlight_style(highlight_style(!search_text.is_empty(), theme))
-            .highlight_symbol(highlight_symbol(search_text))
+            .highlight_style(highlight_style(
+                !params.search_text.is_empty(),
+                params.theme,
+            ))
+            .highlight_symbol(highlight_symbol(params.search_text))
             .style(text_style);
         let mut state = ListState::default();
-        state.select(cursor);
+        state.select(params.cursor);
         frame.render_stateful_widget(list, list_area, &mut state);
     }
 
     if let Some(footer_area) = footer_area {
-        let footer = build_search_footer(footer_area.width, search_text);
+        let footer = build_search_footer(footer_area.width, params.search_text);
         let footer_widget = Paragraph::new(footer).style(search_footer_style());
         frame.render_widget(footer_widget, footer_area);
     }
@@ -199,7 +203,15 @@ mod tests {
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
-                render_entry_list(frame, area, &entries, Some(0), "current", "", &theme, true)
+                let params = EntryListParams {
+                    entries: &entries,
+                    cursor: Some(0),
+                    title: "current",
+                    search_text: "",
+                    theme: &theme,
+                    active: true,
+                };
+                render_entry_list(frame, area, &params)
             })
             .unwrap();
 
@@ -229,7 +241,15 @@ mod tests {
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
-                render_entry_list(frame, area, &entries, Some(0), "current", "", &theme, true)
+                let params = EntryListParams {
+                    entries: &entries,
+                    cursor: Some(0),
+                    title: "current",
+                    search_text: "",
+                    theme: &theme,
+                    active: true,
+                };
+                render_entry_list(frame, area, &params)
             })
             .unwrap();
 
@@ -252,7 +272,15 @@ mod tests {
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
-                render_entry_list(frame, area, &entries, Some(0), "current", "", &theme, true)
+                let params = EntryListParams {
+                    entries: &entries,
+                    cursor: Some(0),
+                    title: "current",
+                    search_text: "",
+                    theme: &theme,
+                    active: true,
+                };
+                render_entry_list(frame, area, &params)
             })
             .unwrap();
 
@@ -309,7 +337,15 @@ mod tests {
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
-                render_entry_list(frame, area, &entries, Some(1), "current", "b", &theme, true)
+                let params = EntryListParams {
+                    entries: &entries,
+                    cursor: Some(1),
+                    title: "current",
+                    search_text: "b",
+                    theme: &theme,
+                    active: true,
+                };
+                render_entry_list(frame, area, &params)
             })
             .unwrap();
 
@@ -333,16 +369,15 @@ mod tests {
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
-                render_entry_list(
-                    frame,
-                    area,
-                    &entries,
-                    Some(0),
-                    "current",
-                    "al",
-                    &theme,
-                    true,
-                )
+                let params = EntryListParams {
+                    entries: &entries,
+                    cursor: Some(0),
+                    title: "current",
+                    search_text: "al",
+                    theme: &theme,
+                    active: true,
+                };
+                render_entry_list(frame, area, &params)
             })
             .unwrap();
 
@@ -364,16 +399,15 @@ mod tests {
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
             .draw(|frame| {
-                render_entry_list(
-                    frame,
-                    area,
-                    &entries,
-                    Some(0),
-                    "current",
-                    "al",
-                    &theme,
-                    true,
-                )
+                let params = EntryListParams {
+                    entries: &entries,
+                    cursor: Some(0),
+                    title: "current",
+                    search_text: "al",
+                    theme: &theme,
+                    active: true,
+                };
+                render_entry_list(frame, area, &params)
             })
             .unwrap();
 

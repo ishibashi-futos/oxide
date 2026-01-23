@@ -63,10 +63,7 @@ pub fn decide_update(current: &Version, target: &Version) -> UpdateDecision {
     }
 }
 
-pub fn select_release_by_tag<'a>(
-    releases: &'a [GitHubRelease],
-    tag: &str,
-) -> Option<GitHubRelease> {
+pub fn select_release_by_tag(releases: &[GitHubRelease], tag: &str) -> Option<GitHubRelease> {
     releases
         .iter()
         .find(|release| release.tag_name == tag)

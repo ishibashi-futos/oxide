@@ -348,7 +348,7 @@ fn ensure_args_within_working_dir(
             if !normalized.starts_with(&base) {
                 return Err(ShellCommandError::PathEscapesWorkingDir);
             }
-            return Ok(());
+            Ok(())
         }
 
         #[cfg(windows)]
@@ -366,7 +366,7 @@ fn ensure_args_within_working_dir(
             if !ok {
                 return Err(ShellCommandError::PathEscapesWorkingDir);
             }
-            return Ok(());
+            Ok(())
         }
     })
 }

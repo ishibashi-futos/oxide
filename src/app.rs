@@ -299,7 +299,7 @@ impl App {
     }
 
     pub fn new_tab(&mut self) -> AppResult<()> {
-        self.tabs.push_new(&self.current_dir);
+        self.tabs.push_new(self.current_dir.as_path());
         self.announce_active_tab_color();
         self.clear_search_state();
         Ok(())
@@ -477,9 +477,7 @@ impl App {
             return None;
         }
         let trimmed = self.slash_input_buffer.trim_end();
-        let Some(stripped) = trimmed.strip_prefix('/') else {
-            return None;
-        };
+        let stripped = trimmed.strip_prefix('/')?;
         let mut parts = stripped.split_whitespace();
         let name = parts.next()?;
         if parts.next().is_some() {
@@ -625,11 +623,11 @@ impl App {
     }
 
     fn store_active_tab(&mut self) {
-        self.tabs.store_active(&self.current_dir);
+        self.tabs.store_active(self.current_dir.as_path());
     }
 
     fn switch_to_tab(&mut self, index: usize) -> AppResult<()> {
-        let Some(next_dir) = self.tabs.switch_to(index, &self.current_dir) else {
+        let Some(next_dir) = self.tabs.switch_to(index, self.current_dir.as_path()) else {
             return Ok(());
         };
         self.set_current_dir(next_dir);
@@ -1032,7 +1030,8 @@ fn split_path_prefix(raw: &str) -> (String, String) {
     if raw.ends_with('/') || raw.ends_with(separator) {
         return (raw.to_string(), String::new());
     }
-    if let Some(index) = raw.rfind(|ch| ch == '/' || ch == separator) {
+    let separators = ['/', separator];
+    if let Some(index) = raw.rfind(|ch| separators.contains(&ch)) {
         let (dir, file) = raw.split_at(index + 1);
         return (dir.to_string(), file.to_string());
     }
@@ -1198,7 +1197,7 @@ impl ShellOutputView {
     }
 
     fn push_line(&mut self, line: String) {
-        self.total_bytes += line.as_bytes().len() + 1;
+        self.total_bytes += line.len() + 1;
         self.lines.push_back(line);
         self.shrink_to_limits();
     }
@@ -1220,7 +1219,7 @@ impl ShellOutputView {
     fn shrink_to_limits(&mut self) {
         while self.lines.len() > self.max_lines || self.total_bytes > self.max_bytes {
             if let Some(line) = self.lines.pop_front() {
-                self.total_bytes = self.total_bytes.saturating_sub(line.as_bytes().len() + 1);
+                self.total_bytes = self.total_bytes.saturating_sub(line.len() + 1);
             } else {
                 break;
             }

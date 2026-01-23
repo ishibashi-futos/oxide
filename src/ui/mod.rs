@@ -41,7 +41,7 @@ use event::{
     slash_input_char,
 };
 use layout::{split_main, split_panes};
-use main_pane::render_entry_list;
+use main_pane::{EntryListParams, render_entry_list};
 use metadata_worker::MetadataWorker;
 use preview_pane::{PreviewPaneState, render_preview_pane};
 use preview_worker::PreviewWorker;
@@ -110,13 +110,12 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
                 metadata_status = None;
             }
         }
-        if metadata_display.is_none() {
-            if let Some(path) = current_path.as_ref() {
-                if let Some(metadata) = metadata_snapshot.get(path) {
-                    metadata_display = Some(format_metadata(metadata));
-                    metadata_status = None;
-                }
-            }
+        if metadata_display.is_none()
+            && let Some(path) = current_path.as_ref()
+            && let Some(metadata) = metadata_snapshot.get(path)
+        {
+            metadata_display = Some(format_metadata(metadata));
+            metadata_status = None;
         }
         if current_path != last_metadata_path {
             metadata_display = None;
@@ -365,26 +364,25 @@ fn draw(
         None
     };
     let (left, right, preview) = split_panes(main, preview_ratio);
-    render_entry_list(
-        frame,
-        left,
-        &app.parent_entries,
-        None,
-        "parent",
-        "",
+    let parent_params = EntryListParams {
+        entries: &app.parent_entries,
+        cursor: None,
+        title: "parent",
+        search_text: "",
         theme,
-        false,
-    );
-    render_entry_list(
-        frame,
-        right,
-        &app.entries,
-        app.cursor,
-        "current",
-        app.search_text(),
+        active: false,
+    };
+    render_entry_list(frame, left, &parent_params);
+
+    let current_params = EntryListParams {
+        entries: &app.entries,
+        cursor: app.cursor,
+        title: "current",
+        search_text: app.search_text(),
         theme,
-        true,
-    );
+        active: true,
+    };
+    render_entry_list(frame, right, &current_params);
     if let Some(preview_area) = preview {
         if app.shell_output_active() {
             let height = preview_area.height.saturating_sub(2) as usize;

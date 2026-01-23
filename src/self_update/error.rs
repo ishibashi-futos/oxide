@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum SelfUpdateError {
     #[error("http error: {0}")]
-    Http(#[from] ureq::Error),
+    Http(Box<ureq::Error>),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("json error: {0}")]
@@ -30,4 +30,10 @@ pub enum SelfUpdateError {
     PrereleaseNotAllowed(String),
     #[error("tls configuration error: {0}")]
     TlsConfig(String),
+}
+
+impl From<ureq::Error> for SelfUpdateError {
+    fn from(error: ureq::Error) -> SelfUpdateError {
+        SelfUpdateError::Http(Box::new(error))
+    }
 }
