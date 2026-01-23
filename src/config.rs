@@ -2,10 +2,21 @@ use std::path::{Path, PathBuf};
 
 use crate::core::ColorThemeId;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub default_theme: Option<ColorThemeId>,
     pub allow_shell: bool,
+    pub allow_opener: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            default_theme: None,
+            allow_shell: false,
+            allow_opener: default_allow_opener(),
+        }
+    }
 }
 
 impl Config {
@@ -23,6 +34,7 @@ impl Config {
 fn parse_config(content: &str) -> Config {
     let mut default_theme = None;
     let mut allow_shell = false;
+    let mut allow_opener = default_allow_opener();
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -40,12 +52,16 @@ fn parse_config(content: &str) -> Config {
             "allow_shell" => {
                 allow_shell = parse_bool_value(value).unwrap_or(false);
             }
+            "allow_opener" => {
+                allow_opener = parse_bool_value(value).unwrap_or(true);
+            }
             _ => continue,
         }
     }
     Config {
         default_theme,
         allow_shell,
+        allow_opener,
     }
 }
 
@@ -82,6 +98,13 @@ fn parse_bool_value(value: &str) -> Option<bool> {
     }
 }
 
+fn default_allow_opener() -> bool {
+    if cfg!(target_os = "linux") {
+        return false;
+    }
+    true
+}
+
 fn config_path() -> Option<PathBuf> {
     let base = std::env::var_os("OX_CONFIG_HOME")
         .map(PathBuf::from)
@@ -105,6 +128,25 @@ mod tests {
         let config = parse_config("allow_shell = true");
 
         assert!(config.allow_shell);
+    }
+
+    #[test]
+    fn parse_config_reads_allow_opener() {
+        let config = parse_config("allow_opener = false");
+
+        assert!(!config.allow_opener);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn default_allow_opener_is_false_on_linux() {
+        assert!(!default_allow_opener());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn default_allow_opener_is_true_on_non_linux() {
+        assert!(default_allow_opener());
     }
 
     #[test]
