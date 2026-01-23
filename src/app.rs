@@ -2024,12 +2024,18 @@ mod tests {
             name: "note.txt".to_string(),
             is_dir: false,
         }];
-        let mut app = App::new(
+        let config = Config {
+            default_theme: None,
+            allow_shell: false,
+            allow_opener: true,
+        };
+        let mut app = App::new_with_config(
             temp_dir.path().to_path_buf(),
             entries,
             Vec::new(),
             Some(0),
             false,
+            config,
         );
 
         let opener = RecordingOpener::default();
