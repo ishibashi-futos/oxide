@@ -74,6 +74,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             theme_state.apply(event);
         }
         app.poll_shell_events();
+        app.flush_session_save();
         let current_path = app.selected_entry_path();
         if metadata_cache_dir.as_ref() != Some(&app.current_dir) {
             metadata_snapshot.clear();
@@ -221,6 +222,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             && let Event::Key(key) = crossterm_event::read()?
         {
             if is_quit_event(key) {
+                app.force_session_save();
                 break;
             }
             if app.shell_output_active() {

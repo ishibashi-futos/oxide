@@ -54,9 +54,12 @@ pub struct App {
     shell_worker: ShellWorker,
     shell_output_view: ShellOutputView,
     shell_output_active: bool,
+    session_save_pending: bool,
+    session_save_deadline: Option<Instant>,
 }
 
 const SLASH_FEEDBACK_TTL: Duration = Duration::from_secs(4);
+const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 
 impl App {
     #[allow(dead_code)]
@@ -112,6 +115,8 @@ impl App {
             shell_worker: ShellWorker::new(),
             shell_output_view: ShellOutputView::new(),
             shell_output_active: false,
+            session_save_pending: false,
+            session_save_deadline: None,
         }
     }
 
@@ -237,6 +242,29 @@ impl App {
         } else {
             Some(self.shell_output_view.view_text(height, width))
         }
+    }
+
+    pub fn flush_session_save(&mut self) {
+        if !self.session_save_pending {
+            return;
+        }
+        let Some(deadline) = self.session_save_deadline else {
+            return;
+        };
+        if self.clock.now() < deadline {
+            return;
+        }
+        self.session_save_pending = false;
+        self.session_save_deadline = None;
+        let tabs = self.tabs.session_tabs();
+        save_session_async(tabs);
+    }
+
+    pub fn force_session_save(&mut self) {
+        self.session_save_pending = false;
+        self.session_save_deadline = None;
+        let tabs = self.tabs.session_tabs();
+        save_session_async(tabs);
     }
 
     pub fn page_up_shell_output(&mut self) {
@@ -758,8 +786,8 @@ impl App {
             return;
         }
         if events.iter().any(should_save_session) {
-            let tabs = self.tabs.session_tabs();
-            save_session_async(tabs);
+            self.session_save_pending = true;
+            self.session_save_deadline = Some(self.clock.now() + SESSION_SAVE_DEBOUNCE);
         }
     }
 
