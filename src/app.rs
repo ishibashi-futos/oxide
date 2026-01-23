@@ -1409,6 +1409,11 @@ mod slash_tests {
     }
 
     fn app_with_two_tabs() -> (tempfile::TempDir, App, PathBuf, PathBuf) {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous_allow = std::env::var_os("OX_TEST_ALLOW_CONFIG");
+        unsafe {
+            std::env::remove_var("OX_TEST_ALLOW_CONFIG");
+        }
         let temp_dir = tempfile::tempdir().unwrap();
         let dir_one = temp_dir.path().join("one");
         let dir_two = temp_dir.path().join("two");
@@ -1418,6 +1423,15 @@ mod slash_tests {
         let mut app = App::load(dir_one.clone()).unwrap();
         app.new_tab().unwrap();
         app.change_dir(dir_two.clone());
+
+        match previous_allow {
+            Some(value) => unsafe {
+                std::env::set_var("OX_TEST_ALLOW_CONFIG", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OX_TEST_ALLOW_CONFIG");
+            },
+        }
 
         (temp_dir, app, dir_one, dir_two)
     }
