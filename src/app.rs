@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::core::{
     ColorTheme, ColorThemeId, Entry, ShellCommandError, ShellCommandRequest, ShellEvent,
     ShellExecutionResult, ShellPermission, ShellWorker, SlashCommand, SlashCommandError,
-    list_entries, parse_slash_command, restore_start_dir,
+    list_entries, parse_slash_command, restore_start_dir, save_session_async,
 };
 use crate::error::{AppError, AppResult};
 use crate::tabs::{TabSummary, TabsState};
@@ -303,6 +303,7 @@ impl App {
         self.tabs.push_new(self.current_dir.as_path());
         self.announce_active_tab_color();
         self.clear_search_state();
+        self.request_session_save();
         Ok(())
     }
 
@@ -621,6 +622,7 @@ impl App {
     fn change_dir(&mut self, path: PathBuf) {
         self.set_current_dir(path);
         self.store_active_tab();
+        self.request_session_save();
     }
 
     fn store_active_tab(&mut self) {
@@ -716,6 +718,7 @@ impl App {
             tab_id: preference.tab_id,
             theme,
         });
+        self.request_session_save();
         match context {
             CommandContext::Tab(_) => {
                 self.timed_feedback(format!("theme: {}", theme.name), FeedbackStatus::Success)
@@ -750,6 +753,12 @@ impl App {
             tabs: Some(summaries),
             expires_at: self.clock.now() + SLASH_FEEDBACK_TTL,
         }
+    }
+
+    fn request_session_save(&mut self) {
+        self.store_active_tab();
+        let tabs = self.tabs.session_tabs();
+        save_session_async(tabs);
     }
 
     fn slash_command_prefix(&self) -> Option<&str> {

@@ -18,7 +18,7 @@ pub use preview::{
     PreviewContent, PreviewError, PreviewEvent, PreviewFailed, PreviewReady, PreviewRequest,
     load_preview,
 };
-pub use session::restore_start_dir;
+pub use session::{SessionTab, restore_start_dir, save_session_async};
 pub use shell::{
     ShellCommandError, ShellCommandRequest, ShellExecutionGuard, ShellExecutionResult,
     ShellPermission,

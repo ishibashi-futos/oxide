@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::core::ColorThemeId;
+use crate::core::{ColorThemeId, SessionTab};
 
 #[derive(Debug, Clone)]
 pub(crate) struct TabsState {
@@ -133,6 +133,17 @@ impl TabsState {
         let tab = self.tabs.get_mut(self.active).expect("active tab exists");
         tab.set_theme(theme_id);
         tab.color_preference()
+    }
+
+    pub(crate) fn session_tabs(&self) -> Vec<SessionTab> {
+        self.tabs
+            .iter()
+            .map(|tab| SessionTab {
+                tab_id: tab.id,
+                path: tab.path.clone(),
+                theme_name: tab.theme_id.name().to_string(),
+            })
+            .collect()
     }
 }
 
