@@ -57,6 +57,17 @@ cargo test
 
 ```
 
+## ⚙️ Configuration
+
+設定は `config.toml` に集約します。
+
+詳細は [Configuration](./docs/configuration.md) を参照してください。
+
+概要:
+
+* 置き場所は `OX_CONFIG_HOME` があれば `{OX_CONFIG_HOME}/oxide/config.toml`。
+* 未設定なら `$HOME/.config/oxide/config.toml` を使います。Windowsの場合は、規定で `%USERPROFILE%/.config/oxide/config.toml` が使用されます
+
 ## 📄 ライセンス
 
 MIT License
