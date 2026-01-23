@@ -50,6 +50,7 @@ pub struct App {
     slash_history: Vec<String>,
     slash_history_index: Option<usize>,
     shell_permission: ShellPermission,
+    allow_opener: bool,
     shell_worker: ShellWorker,
     shell_output_view: ShellOutputView,
     shell_output_active: bool,
@@ -107,6 +108,7 @@ impl App {
             slash_history: Vec::new(),
             slash_history_index: None,
             shell_permission: ShellPermission::from_env(config.allow_shell),
+            allow_opener: config.allow_opener,
             shell_worker: ShellWorker::new(),
             shell_output_view: ShellOutputView::new(),
             shell_output_active: false,
@@ -153,6 +155,10 @@ impl App {
         if selected.is_dir {
             self.change_dir(target);
             self.refresh()?;
+            return Ok(());
+        }
+        if !self.allow_opener {
+            self.slash_feedback = Some(self.opener_disabled_feedback());
             return Ok(());
         }
         opener.open(&target)
@@ -844,6 +850,13 @@ impl App {
         self.timed_feedback(
             format!("preview: {}", if enabled { "on" } else { "off" }),
             FeedbackStatus::Success,
+        )
+    }
+
+    fn opener_disabled_feedback(&self) -> SlashFeedback {
+        self.timed_feedback(
+            "opener is disabled. Set allow_opener = true to open with external apps.".to_string(),
+            FeedbackStatus::Warn,
         )
     }
 
@@ -2011,12 +2024,18 @@ mod tests {
             name: "note.txt".to_string(),
             is_dir: false,
         }];
-        let mut app = App::new(
+        let config = Config {
+            default_theme: None,
+            allow_shell: false,
+            allow_opener: true,
+        };
+        let mut app = App::new_with_config(
             temp_dir.path().to_path_buf(),
             entries,
             Vec::new(),
             Some(0),
             false,
+            config,
         );
 
         let opener = RecordingOpener::default();
@@ -2025,6 +2044,42 @@ mod tests {
         assert_eq!(
             opener.opened_paths.borrow().as_slice(),
             std::slice::from_ref(&file)
+        );
+    }
+
+    #[test]
+    fn open_selected_warns_when_opener_is_disabled() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = temp_dir.path().join("note.txt");
+        std::fs::write(&file, "hi").unwrap();
+
+        let entries = vec![Entry {
+            name: "note.txt".to_string(),
+            is_dir: false,
+        }];
+        let config = Config {
+            default_theme: None,
+            allow_shell: false,
+            allow_opener: false,
+        };
+        let mut app = App::new_with_config(
+            temp_dir.path().to_path_buf(),
+            entries,
+            Vec::new(),
+            Some(0),
+            false,
+            config,
+        );
+
+        let opener = RecordingOpener::default();
+        app.open_selected(&opener).unwrap();
+
+        assert!(opener.opened_paths.borrow().is_empty());
+        let feedback = app.slash_feedback().unwrap();
+        assert_eq!(feedback.status, FeedbackStatus::Warn);
+        assert_eq!(
+            feedback.text,
+            "opener is disabled. Set allow_opener = true to open with external apps."
         );
     }
 
