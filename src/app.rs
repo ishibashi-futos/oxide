@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::core::{
     ColorTheme, ColorThemeId, Entry, ShellCommandError, ShellCommandRequest, ShellEvent,
     ShellExecutionResult, ShellPermission, ShellWorker, SlashCommand, SlashCommandError,
-    list_entries, parse_slash_command,
+    list_entries, parse_slash_command, restore_start_dir,
 };
 use crate::error::{AppError, AppResult};
 use crate::tabs::{TabSummary, TabsState};
@@ -117,12 +117,13 @@ impl App {
 
     pub fn load(current_dir: PathBuf) -> AppResult<Self> {
         let show_hidden = false;
-        let entries = list_entries(&current_dir, show_hidden)?;
-        let parent_entries = list_parent_entries(&current_dir, show_hidden)?;
+        let restored_dir = restore_start_dir(current_dir);
+        let entries = list_entries(&restored_dir, show_hidden)?;
+        let parent_entries = list_parent_entries(&restored_dir, show_hidden)?;
         let cursor = if entries.is_empty() { None } else { Some(0) };
         let config = Config::load();
         Ok(Self::new_with_config(
-            current_dir,
+            restored_dir,
             entries,
             parent_entries,
             cursor,

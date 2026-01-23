@@ -106,10 +106,17 @@ fn default_allow_opener() -> bool {
 }
 
 fn config_path() -> Option<PathBuf> {
+    config_root().map(|root| root.join("config.toml"))
+}
+
+pub fn config_root() -> Option<PathBuf> {
+    if cfg!(test) && std::env::var_os("OX_CONFIG_HOME").is_none() {
+        return None;
+    }
     let base = std::env::var_os("OX_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(base.join(Path::new("oxide").join("config.toml")))
+    Some(base.join(Path::new("oxide")))
 }
 
 #[cfg(test)]

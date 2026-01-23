@@ -2,6 +2,7 @@ mod entries;
 mod git;
 mod metadata;
 mod preview;
+mod session;
 mod shell;
 mod shell_worker;
 mod slash_command;
@@ -17,6 +18,7 @@ pub use preview::{
     PreviewContent, PreviewError, PreviewEvent, PreviewFailed, PreviewReady, PreviewRequest,
     load_preview,
 };
+pub use session::restore_start_dir;
 pub use shell::{
     ShellCommandError, ShellCommandRequest, ShellExecutionGuard, ShellExecutionResult,
     ShellPermission,
