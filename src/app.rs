@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::core::{
     ColorTheme, ColorThemeId, Entry, ShellCommandError, ShellCommandRequest, ShellEvent,
     ShellExecutionResult, ShellPermission, ShellWorker, SlashCommand, SlashCommandError,
-    list_entries, parse_slash_command, restore_start_dir, save_session_async,
+    list_entries, load_session_tabs, parse_slash_command, save_session_async,
 };
 use crate::error::{AppError, AppResult};
 use crate::tabs::{TabSummary, TabsEvent, TabsState};
@@ -120,20 +120,75 @@ impl App {
         }
     }
 
+    fn new_with_tabs(
+        current_dir: PathBuf,
+        entries: Vec<Entry>,
+        parent_entries: Vec<Entry>,
+        cursor: Option<usize>,
+        show_hidden: bool,
+        config: Config,
+        tabs: TabsState,
+    ) -> Self {
+        let clock = Arc::new(SystemClock);
+        Self {
+            current_dir,
+            entries,
+            parent_entries,
+            cursor,
+            show_hidden,
+            clock,
+            tabs,
+            tab_color_changed: None,
+            search_buffer: String::new(),
+            search_origin: None,
+            slash_input_active: false,
+            slash_input_buffer: String::new(),
+            slash_feedback: None,
+            preview_visible: false,
+            preview_paused: false,
+            preview_ratio_percent: 35,
+            slash_history: Vec::new(),
+            slash_history_index: None,
+            shell_permission: ShellPermission::from_env(config.allow_shell),
+            allow_opener: config.allow_opener,
+            shell_worker: ShellWorker::new(),
+            shell_output_view: ShellOutputView::new(),
+            shell_output_active: false,
+            session_save_pending: false,
+            session_save_deadline: None,
+        }
+    }
+
     pub fn load(current_dir: PathBuf) -> AppResult<Self> {
         let show_hidden = false;
-        let restored_dir = restore_start_dir(current_dir);
+        let config = Config::load();
+        let session_tabs = load_session_tabs()
+            .into_iter()
+            .filter(|tab| tab.path.is_dir())
+            .collect::<Vec<_>>();
+        let (tabs, restored_dir) = if session_tabs.is_empty() {
+            (
+                TabsState::new(current_dir.clone(), config.default_theme),
+                current_dir,
+            )
+        } else {
+            let restored_dir = session_tabs[0].path.clone();
+            (
+                TabsState::from_session(session_tabs, config.default_theme),
+                restored_dir,
+            )
+        };
         let entries = list_entries(&restored_dir, show_hidden)?;
         let parent_entries = list_parent_entries(&restored_dir, show_hidden)?;
         let cursor = if entries.is_empty() { None } else { Some(0) };
-        let config = Config::load();
-        Ok(Self::new_with_config(
+        Ok(Self::new_with_tabs(
             restored_dir,
             entries,
             parent_entries,
             cursor,
             show_hidden,
             config,
+            tabs,
         ))
     }
 
@@ -1335,6 +1390,7 @@ fn compact_output(output: &str, max_len: usize) -> Option<String> {
 #[cfg(test)]
 mod slash_tests {
     use super::*;
+    use crate::config::ENV_LOCK;
     use crate::tabs::TabSummary;
 
     #[derive(Debug)]
@@ -1628,6 +1684,66 @@ mod slash_tests {
         app.complete_slash_candidate();
 
         assert_eq!(app.shell_output_view.lines, before);
+    }
+
+    #[test]
+    fn load_restores_multiple_tabs_from_session() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous = std::env::var_os("OX_CONFIG_HOME");
+        let previous_allow = std::env::var_os("OX_TEST_ALLOW_CONFIG");
+        let temp_dir = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("OX_CONFIG_HOME", temp_dir.path());
+            std::env::set_var("OX_TEST_ALLOW_CONFIG", "1");
+        }
+
+        let config_root = temp_dir.path().join("oxide");
+        std::fs::create_dir_all(&config_root).unwrap();
+        let dir_one = temp_dir.path().join("one");
+        let dir_two = temp_dir.path().join("two");
+        std::fs::create_dir(&dir_one).unwrap();
+        std::fs::create_dir(&dir_two).unwrap();
+
+        let session = serde_json::json!({
+            "version": 1,
+            "session_id": "test",
+            "tabs": [
+                { "tab_id": 4, "path": dir_one, "theme": "Night Harbor" },
+                { "tab_id": 8, "path": dir_two, "theme": "Glacier Coast" }
+            ]
+        });
+        std::fs::write(
+            config_root.join("session.json"),
+            serde_json::to_string(&session).unwrap(),
+        )
+        .unwrap();
+
+        let app = App::load(PathBuf::from("/fallback")).unwrap();
+
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var("OX_CONFIG_HOME", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OX_CONFIG_HOME");
+            },
+        }
+        match previous_allow {
+            Some(value) => unsafe {
+                std::env::set_var("OX_TEST_ALLOW_CONFIG", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OX_TEST_ALLOW_CONFIG");
+            },
+        }
+
+        assert_eq!(app.current_dir, dir_one);
+        assert_eq!(app.tabs.count(), 2);
+        let restored_tabs = app.tabs.session_tabs();
+        assert_eq!(restored_tabs[0].path, dir_one);
+        assert_eq!(restored_tabs[1].path, dir_two);
+        assert_eq!(restored_tabs[0].theme_name, "Night Harbor");
+        assert_eq!(restored_tabs[1].theme_name, "Glacier Coast");
     }
 
     #[test]

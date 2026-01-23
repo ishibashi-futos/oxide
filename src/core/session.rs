@@ -4,10 +4,23 @@ use std::thread;
 use crate::config::config_root;
 
 pub fn load_session_paths() -> Vec<PathBuf> {
+    if cfg!(test) && std::env::var_os("OX_TEST_ALLOW_CONFIG").is_none() {
+        return Vec::new();
+    }
     let Some(path) = session_path() else {
         return Vec::new();
     };
     load_session_paths_from(&path)
+}
+
+pub fn load_session_tabs() -> Vec<SessionTab> {
+    if cfg!(test) && std::env::var_os("OX_TEST_ALLOW_CONFIG").is_none() {
+        return Vec::new();
+    }
+    let Some(path) = session_path() else {
+        return Vec::new();
+    };
+    load_session_tabs_from(&path)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +53,13 @@ fn load_session_paths_from(path: &Path) -> Vec<PathBuf> {
     parse_session_paths(&content)
 }
 
+fn load_session_tabs_from(path: &Path) -> Vec<SessionTab> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    parse_session_tabs(&content)
+}
+
 fn parse_session_paths(content: &str) -> Vec<PathBuf> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
         return Vec::new();
@@ -50,6 +70,35 @@ fn parse_session_paths(content: &str) -> Vec<PathBuf> {
     tabs.iter()
         .filter_map(|tab| tab.get("path").and_then(|path| path.as_str()))
         .map(PathBuf::from)
+        .collect()
+}
+
+fn parse_session_tabs(content: &str) -> Vec<SessionTab> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return Vec::new();
+    };
+    let Some(tabs) = value.get("tabs").and_then(|tabs| tabs.as_array()) else {
+        return Vec::new();
+    };
+    tabs.iter()
+        .enumerate()
+        .filter_map(|(index, tab)| {
+            let path = tab.get("path").and_then(|path| path.as_str())?;
+            let tab_id = tab
+                .get("tab_id")
+                .and_then(|id| id.as_u64())
+                .unwrap_or(index as u64 + 1);
+            let theme_name = tab
+                .get("theme")
+                .and_then(|theme| theme.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(SessionTab {
+                tab_id,
+                path: PathBuf::from(path),
+                theme_name,
+            })
+        })
         .collect()
 }
 
@@ -103,10 +152,8 @@ fn choose_restore_dir(paths: &[PathBuf], default: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use crate::config::ENV_LOCK;
     use tempfile::tempdir;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parse_session_paths_reads_tab_paths() {
@@ -122,6 +169,36 @@ mod tests {
         let paths = parse_session_paths(content);
 
         assert_eq!(paths, vec![PathBuf::from("/one"), PathBuf::from("/two")]);
+    }
+
+    #[test]
+    fn parse_session_tabs_reads_theme_and_id() {
+        let content = r#"{
+  "version": 1,
+  "session_id": "test",
+  "tabs": [
+    { "tab_id": 9, "path": "/one", "theme": "Night Harbor" },
+    { "path": "/two" }
+  ]
+}"#;
+
+        let tabs = parse_session_tabs(content);
+
+        assert_eq!(
+            tabs,
+            vec![
+                SessionTab {
+                    tab_id: 9,
+                    path: PathBuf::from("/one"),
+                    theme_name: "Night Harbor".to_string(),
+                },
+                SessionTab {
+                    tab_id: 2,
+                    path: PathBuf::from("/two"),
+                    theme_name: "".to_string(),
+                },
+            ]
+        );
     }
 
     #[test]
@@ -183,9 +260,11 @@ mod tests {
     fn restore_start_dir_uses_default_when_session_missing() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let previous = std::env::var_os("OX_CONFIG_HOME");
+        let previous_allow = std::env::var_os("OX_TEST_ALLOW_CONFIG");
         let temp_dir = tempdir().expect("tempdir");
         unsafe {
             std::env::set_var("OX_CONFIG_HOME", temp_dir.path());
+            std::env::set_var("OX_TEST_ALLOW_CONFIG", "1");
         }
 
         let restored = restore_start_dir(PathBuf::from("/fallback"));
@@ -196,6 +275,14 @@ mod tests {
             },
             None => unsafe {
                 std::env::remove_var("OX_CONFIG_HOME");
+            },
+        }
+        match previous_allow {
+            Some(value) => unsafe {
+                std::env::set_var("OX_TEST_ALLOW_CONFIG", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OX_TEST_ALLOW_CONFIG");
             },
         }
 

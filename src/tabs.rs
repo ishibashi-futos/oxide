@@ -62,6 +62,31 @@ impl TabsState {
         }
     }
 
+    pub(crate) fn from_session(tabs: Vec<SessionTab>, default_theme: Option<ColorThemeId>) -> Self {
+        let fallback = default_theme.unwrap_or(ColorThemeId::GlacierCoast);
+        let mut max_id = 0;
+        let restored_tabs = tabs
+            .into_iter()
+            .map(|tab| {
+                let theme_id = ColorThemeId::from_name(&tab.theme_name).unwrap_or(fallback);
+                max_id = max_id.max(tab.tab_id);
+                Tab {
+                    id: tab.tab_id,
+                    path: tab.path,
+                    theme_id,
+                }
+            })
+            .collect::<Vec<_>>();
+        let next_id = max_id.saturating_add(1).max(1);
+        Self {
+            tabs: restored_tabs,
+            active: 0,
+            next_id,
+            rotation: ThemeRotation::new(fallback),
+            events: Vec::new(),
+        }
+    }
+
     pub(crate) fn count(&self) -> usize {
         self.tabs.len()
     }

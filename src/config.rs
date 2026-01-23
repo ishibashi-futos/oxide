@@ -110,7 +110,7 @@ fn config_path() -> Option<PathBuf> {
 }
 
 pub fn config_root() -> Option<PathBuf> {
-    if cfg!(test) && std::env::var_os("OX_CONFIG_HOME").is_none() {
+    if cfg!(test) && std::env::var_os("OX_TEST_ALLOW_CONFIG").is_none() {
         return None;
     }
     let base = std::env::var_os("OX_CONFIG_HOME")
@@ -118,6 +118,9 @@ pub fn config_root() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
     Some(base.join(Path::new("oxide")))
 }
+
+#[cfg(test)]
+pub static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {
