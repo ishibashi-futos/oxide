@@ -19,6 +19,8 @@ pub use preview::{
     PreviewContent, PreviewError, PreviewEvent, PreviewFailed, PreviewReady, PreviewRequest,
     load_preview,
 };
+#[cfg(test)]
+pub(crate) use session::push_session_event_for_test;
 pub use session::{
     SessionEvent, SessionTab, load_session_tabs, poll_session_events, save_session_async,
 };

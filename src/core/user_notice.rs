@@ -43,10 +43,7 @@ pub struct UserNotice {
 
 impl UserNotice {
     pub fn new(level: UserNoticeLevel, text: impl Into<String>, source: impl Into<String>) -> Self {
-        let ttl_ms = match level {
-            UserNoticeLevel::Info | UserNoticeLevel::Success => Some(DEFAULT_NOTICE_TTL_MS),
-            UserNoticeLevel::Warn | UserNoticeLevel::Error => None,
-        };
+        let ttl_ms = Some(DEFAULT_NOTICE_TTL_MS);
         Self {
             level,
             text: text.into(),
@@ -152,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn notice_defaults_ttl_for_info_and_success() {
+    fn notice_defaults_ttl_for_all_levels() {
         let info = UserNotice::new(UserNoticeLevel::Info, "info", "test");
         let success = UserNotice::new(UserNoticeLevel::Success, "ok", "test");
         let warn = UserNotice::new(UserNoticeLevel::Warn, "warn", "test");
@@ -160,8 +157,8 @@ mod tests {
 
         assert_eq!(info.ttl_ms, Some(DEFAULT_NOTICE_TTL_MS));
         assert_eq!(success.ttl_ms, Some(DEFAULT_NOTICE_TTL_MS));
-        assert_eq!(warn.ttl_ms, None);
-        assert_eq!(error.ttl_ms, None);
+        assert_eq!(warn.ttl_ms, Some(DEFAULT_NOTICE_TTL_MS));
+        assert_eq!(error.ttl_ms, Some(DEFAULT_NOTICE_TTL_MS));
     }
 
     #[test]

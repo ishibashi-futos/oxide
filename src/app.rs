@@ -700,11 +700,12 @@ impl App {
         for event in poll_session_events() {
             match event {
                 SessionEvent::SaveFailed => {
-                    self.slash_feedback =
-                        Some(self.timed_feedback(
-                            "session: save failed".to_string(),
-                            FeedbackStatus::Error,
-                        ));
+                    self.push_user_notice(UserNotice::with_ttl_ms(
+                        UserNoticeLevel::Warn,
+                        "save failed",
+                        "session",
+                        None,
+                    ));
                 }
             }
         }
@@ -1086,7 +1087,6 @@ impl App {
     fn shell_error_feedback(&self, error: ShellCommandError) -> SlashFeedback {
         self.timed_feedback(error.to_string(), FeedbackStatus::Error)
     }
-
 
     fn announce_active_tab_color(&mut self) {
         let theme_id = self.tabs.active_theme_id();
@@ -2041,6 +2041,20 @@ mod slash_tests {
         assert_eq!(notice.source, "shell");
         assert_eq!(notice.level, UserNoticeLevel::Info);
         assert!(notice.text.contains("started"));
+    }
+
+    #[test]
+    fn session_save_failure_emits_user_notice() {
+        let mut app = empty_app();
+
+        let _ = crate::core::poll_session_events();
+        crate::core::push_session_event_for_test(SessionEvent::SaveFailed);
+        app.poll_session_events();
+
+        let notice = app.user_notice().expect("notice");
+        assert_eq!(notice.source, "session");
+        assert_eq!(notice.level, UserNoticeLevel::Warn);
+        assert!(notice.text.contains("save failed"));
     }
 
     #[test]
