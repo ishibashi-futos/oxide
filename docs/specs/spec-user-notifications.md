@@ -74,7 +74,7 @@ UI は `UserNotice` を受け取り、Bottom Bar に表示する。
 
 ### 7.2 `/shell`
 
-- 実行開始: `Info`（例: `shell: ls -al...; running`）。
+- 実行開始: `Info`（例: `shell: ls -al...; started`）。
 - 実行成功: `Success`（例: `shell: cargo bui...; exit=0`）。
 - 実行失敗: `Error`（例: `shell: docker ru...; exit=1`）。
 
@@ -95,6 +95,6 @@ UI は `UserNotice` を受け取り、Bottom Bar に表示する。
 
 ## 9. TODO
 
-- `UserNotice` の共通イベント実装。
-- `SlashFeedback` から `UserNotice` への統合。
-- セッション保存の失敗通知実装。
+- [ ] `UserNotice` の共通イベント実装。
+- [ ] `SlashFeedback` から `UserNotice` への統合。
+- [ ] セッション保存の失敗通知実装。
