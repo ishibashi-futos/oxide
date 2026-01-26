@@ -225,7 +225,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
         guard.terminal_mut().draw(|frame| {
             draw(
                 frame,
-                &app,
+                &mut app,
                 metadata_display.as_deref(),
                 metadata_status,
                 git_display.as_deref(),
@@ -378,7 +378,7 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
 
 fn draw(
     frame: &mut Frame<'_>,
-    app: &App,
+    app: &mut App,
     metadata_display: Option<&str>,
     metadata_status: Option<MetadataStatus>,
     git_display: Option<&str>,
@@ -439,13 +439,16 @@ fn draw(
             render_preview_pane(frame, preview_area, pane_state);
         }
     }
+    let notice = app.user_notice();
+    let feedback = app.slash_feedback();
     render_bottom_bar(
         frame,
         bottom,
         metadata_display,
         metadata_status,
         git_display,
-        app.slash_feedback(),
+        notice.as_ref(),
+        feedback,
         theme,
     );
     if let Some(slash_area) = slash {

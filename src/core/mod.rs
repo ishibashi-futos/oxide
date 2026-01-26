@@ -7,6 +7,7 @@ mod shell;
 mod shell_worker;
 mod slash_command;
 mod theme;
+pub mod user_notice;
 
 pub use entries::{Entry, list_entries};
 pub use git::GitWorker;

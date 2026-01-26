@@ -9,6 +9,7 @@ use ratatui::{
 
 use crate::app::{SlashCandidates, SlashFeedback};
 use crate::core::ColorTheme;
+use crate::core::user_notice::{UserNotice, UserNoticeLevel};
 use crate::core::{EntryMetadata, MetadataStatus};
 use crate::tabs::TabSummary;
 use crate::ui::theme::to_color;
@@ -19,6 +20,7 @@ pub fn render_bottom_bar(
     metadata: Option<&str>,
     metadata_status: Option<MetadataStatus>,
     git: Option<&str>,
+    notice: Option<&UserNotice>,
     feedback: Option<&SlashFeedback>,
     theme: &ColorTheme,
 ) {
@@ -26,6 +28,7 @@ pub fn render_bottom_bar(
         metadata,
         metadata_status,
         git,
+        notice,
         feedback,
         area.width,
         theme,
@@ -67,13 +70,20 @@ fn build_bottom_bar(
     metadata: Option<&str>,
     metadata_status: Option<MetadataStatus>,
     git: Option<&str>,
+    notice: Option<&UserNotice>,
     feedback: Option<&SlashFeedback>,
     width: u16,
     theme: &ColorTheme,
 ) -> Line<'static> {
     let default_style = Style::default().fg(to_color(theme.grayscale.high));
     let mut left_spans = Vec::new();
-    if let Some(feedback) = feedback {
+    if let Some(notice) = notice {
+        let text = format_notice_text(notice);
+        if !text.is_empty() {
+            let style = notice_style(notice.level, theme);
+            left_spans.push(Span::styled(text, style));
+        }
+    } else if let Some(feedback) = feedback {
         let (text, style) = if let Some(tabs) = feedback.tabs.as_deref() {
             (
                 format_tabs(tabs),
@@ -113,6 +123,31 @@ fn build_bottom_bar(
         vec![Span::styled(git_line, default_style)],
         width,
     )
+}
+
+fn format_notice_text(notice: &UserNotice) -> String {
+    let text = notice.text.trim();
+    let source = notice.source.trim();
+    if text.is_empty() && source.is_empty() {
+        return String::new();
+    }
+    if source.is_empty() {
+        return format!("{} {}", notice.level.icon(), text);
+    }
+    if text.is_empty() {
+        return format!("{} {}", notice.level.icon(), source);
+    }
+    format!("{} {}: {}", notice.level.icon(), source, text)
+}
+
+fn notice_style(level: UserNoticeLevel, theme: &ColorTheme) -> Style {
+    let color = match level {
+        UserNoticeLevel::Success => theme.semantic.success,
+        UserNoticeLevel::Info => theme.semantic.info,
+        UserNoticeLevel::Warn => theme.semantic.warn,
+        UserNoticeLevel::Error => theme.semantic.error,
+    };
+    Style::default().fg(to_color(color))
 }
 
 fn build_slash_bar(
@@ -370,6 +405,7 @@ mod tests {
                     None,
                     Some("git: main"),
                     None,
+                    None,
                     &theme,
                 )
             })
@@ -389,7 +425,7 @@ mod tests {
         let area = Rect::new(0, 0, 30, 1);
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None, None, None, &theme))
+            .draw(|frame| render_bottom_bar(frame, area, None, None, None, None, None, &theme))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -425,6 +461,7 @@ mod tests {
                     Some(&metadata_line),
                     None,
                     Some("git: main"),
+                    None,
                     Some(&feedback),
                     &theme,
                 )
@@ -436,6 +473,46 @@ mod tests {
 
         assert!(line.contains("preview: on"));
         assert!(line.contains("size: 7 B"));
+    }
+
+    #[test]
+    fn render_bottom_bar_shows_user_notice() {
+        let notice = UserNotice::new(UserNoticeLevel::Info, "exit=0", "shell");
+
+        let backend = TestBackend::new(60, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 60, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
+        terminal
+            .draw(|frame| {
+                render_bottom_bar(frame, area, None, None, None, Some(&notice), None, &theme)
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 60);
+
+        assert!(line.contains("shell: exit=0"));
+    }
+
+    #[test]
+    fn user_notice_uses_semantic_color() {
+        let notice = UserNotice::new(UserNoticeLevel::Warn, "save failed", "session");
+
+        let backend = TestBackend::new(60, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 60, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
+        terminal
+            .draw(|frame| {
+                render_bottom_bar(frame, area, None, None, None, Some(&notice), None, &theme)
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let style = find_cell_style(buffer, "session").expect("style not found");
+
+        assert_eq!(style.fg, Some(to_color(theme.semantic.warn)));
     }
 
     #[test]
@@ -463,7 +540,9 @@ mod tests {
         let area = Rect::new(0, 0, 60, 1);
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None, None, Some(&feedback), &theme))
+            .draw(|frame| {
+                render_bottom_bar(frame, area, None, None, None, None, Some(&feedback), &theme)
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -490,7 +569,9 @@ mod tests {
         let area = Rect::new(0, 0, 40, 1);
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None, None, Some(&feedback), &theme))
+            .draw(|frame| {
+                render_bottom_bar(frame, area, None, None, None, None, Some(&feedback), &theme)
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -627,6 +708,7 @@ mod tests {
                     Some(MetadataStatus::Loading),
                     None,
                     None,
+                    None,
                     &theme,
                 )
             })
@@ -651,6 +733,7 @@ mod tests {
                     area,
                     None,
                     Some(MetadataStatus::Error),
+                    None,
                     None,
                     None,
                     &theme,

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config::{Config, ConfigEvent, poll_config_events};
+use crate::core::user_notice::{UserNotice, UserNoticeQueue};
 use crate::core::{
     ColorTheme, ColorThemeId, Entry, SessionEvent, SessionTab, ShellCommandError,
     ShellCommandRequest, ShellEvent, ShellExecutionResult, ShellPermission, ShellWorker,
@@ -73,6 +74,7 @@ pub struct App {
     slash_input_active: bool,
     slash_input_buffer: String,
     slash_feedback: Option<SlashFeedback>,
+    user_notice_queue: UserNoticeQueue,
     preview_visible: bool,
     preview_paused: bool,
     preview_ratio_percent: u16,
@@ -134,6 +136,7 @@ impl App {
             slash_input_active: false,
             slash_input_buffer: String::new(),
             slash_feedback: None,
+            user_notice_queue: UserNoticeQueue::new(),
             preview_visible: false,
             preview_paused: false,
             preview_ratio_percent: 35,
@@ -173,6 +176,7 @@ impl App {
             slash_input_active: false,
             slash_input_buffer: String::new(),
             slash_feedback: None,
+            user_notice_queue: UserNoticeQueue::new(),
             preview_visible: false,
             preview_paused: false,
             preview_ratio_percent: 35,
@@ -358,6 +362,10 @@ impl App {
             return None;
         }
         Some(feedback)
+    }
+
+    pub fn user_notice(&mut self) -> Option<UserNotice> {
+        self.user_notice_queue.current(self.clock.now()).cloned()
     }
 
     pub fn shell_output_active(&self) -> bool {
