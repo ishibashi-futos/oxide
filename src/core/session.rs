@@ -108,6 +108,11 @@ fn notify_session_event(event: SessionEvent) {
     let _ = session_event_bus().sender.send(event);
 }
 
+#[cfg(test)]
+pub(crate) fn push_session_event_for_test(event: SessionEvent) {
+    notify_session_event(event);
+}
+
 fn session_history_dir(root: &Path) -> PathBuf {
     root.join("sessions")
 }

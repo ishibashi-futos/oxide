@@ -9,27 +9,45 @@ use ratatui::{
 
 use crate::app::{SlashCandidates, SlashFeedback};
 use crate::core::ColorTheme;
+use crate::core::user_notice::{UserNotice, UserNoticeLevel};
 use crate::core::{EntryMetadata, MetadataStatus};
 use crate::tabs::TabSummary;
 use crate::ui::theme::to_color;
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BottomBarState<'a> {
+    pub(crate) metadata: Option<&'a str>,
+    pub(crate) metadata_status: Option<MetadataStatus>,
+    pub(crate) git: Option<&'a str>,
+    pub(crate) notice: Option<&'a UserNotice>,
+    pub(crate) feedback: Option<&'a SlashFeedback>,
+}
+
+impl<'a> BottomBarState<'a> {
+    pub(crate) fn new(
+        metadata: Option<&'a str>,
+        metadata_status: Option<MetadataStatus>,
+        git: Option<&'a str>,
+        notice: Option<&'a UserNotice>,
+        feedback: Option<&'a SlashFeedback>,
+    ) -> Self {
+        Self {
+            metadata,
+            metadata_status,
+            git,
+            notice,
+            feedback,
+        }
+    }
+}
+
 pub fn render_bottom_bar(
     frame: &mut Frame<'_>,
     area: Rect,
-    metadata: Option<&str>,
-    metadata_status: Option<MetadataStatus>,
-    git: Option<&str>,
-    feedback: Option<&SlashFeedback>,
+    state: BottomBarState<'_>,
     theme: &ColorTheme,
 ) {
-    let bar = Paragraph::new(build_bottom_bar(
-        metadata,
-        metadata_status,
-        git,
-        feedback,
-        area.width,
-        theme,
-    ));
+    let bar = Paragraph::new(build_bottom_bar(&state, area.width, theme));
     frame.render_widget(
         bar.style(Style::default().bg(to_color(theme.grayscale.low))),
         area,
@@ -63,17 +81,16 @@ pub fn render_search_bar(frame: &mut Frame<'_>, area: Rect, input: &str, theme: 
     frame.render_widget(bar, area);
 }
 
-fn build_bottom_bar(
-    metadata: Option<&str>,
-    metadata_status: Option<MetadataStatus>,
-    git: Option<&str>,
-    feedback: Option<&SlashFeedback>,
-    width: u16,
-    theme: &ColorTheme,
-) -> Line<'static> {
+fn build_bottom_bar(state: &BottomBarState<'_>, width: u16, theme: &ColorTheme) -> Line<'static> {
     let default_style = Style::default().fg(to_color(theme.grayscale.high));
     let mut left_spans = Vec::new();
-    if let Some(feedback) = feedback {
+    if let Some(notice) = state.notice {
+        let text = format_notice_text(notice);
+        if !text.is_empty() {
+            let style = notice_style(notice.level, theme);
+            left_spans.push(Span::styled(text, style));
+        }
+    } else if let Some(feedback) = state.feedback {
         let (text, style) = if let Some(tabs) = feedback.tabs.as_deref() {
             (
                 format_tabs(tabs),
@@ -97,7 +114,8 @@ fn build_bottom_bar(
             left_spans.push(Span::styled(text, style));
         }
     }
-    let (metadata_text, metadata_style) = metadata_parts(metadata, metadata_status, theme);
+    let (metadata_text, metadata_style) =
+        metadata_parts(state.metadata, state.metadata_status, theme);
     if !metadata_text.is_empty() {
         if !left_spans.is_empty() {
             left_spans.push(Span::styled(" | ", default_style));
@@ -105,7 +123,8 @@ fn build_bottom_bar(
         left_spans.push(Span::styled(metadata_text, metadata_style));
     }
 
-    let git_line = git
+    let git_line = state
+        .git
         .map(|value| value.to_string())
         .unwrap_or_else(placeholder_git);
     line_with_right_spans(
@@ -113,6 +132,31 @@ fn build_bottom_bar(
         vec![Span::styled(git_line, default_style)],
         width,
     )
+}
+
+fn format_notice_text(notice: &UserNotice) -> String {
+    let text = notice.text.trim();
+    let source = notice.source.trim();
+    if text.is_empty() && source.is_empty() {
+        return String::new();
+    }
+    if source.is_empty() {
+        return format!("{} {}", notice.level.icon(), text);
+    }
+    if text.is_empty() {
+        return format!("{} {}", notice.level.icon(), source);
+    }
+    format!("{} {}: {}", notice.level.icon(), source, text)
+}
+
+fn notice_style(level: UserNoticeLevel, theme: &ColorTheme) -> Style {
+    let color = match level {
+        UserNoticeLevel::Success => theme.semantic.success,
+        UserNoticeLevel::Info => theme.semantic.info,
+        UserNoticeLevel::Warn => theme.semantic.warn,
+        UserNoticeLevel::Error => theme.semantic.error,
+    };
+    Style::default().fg(to_color(color))
 }
 
 fn build_slash_bar(
@@ -366,10 +410,7 @@ mod tests {
                 render_bottom_bar(
                     frame,
                     area,
-                    Some(&metadata_line),
-                    None,
-                    Some("git: main"),
-                    None,
+                    BottomBarState::new(Some(&metadata_line), None, Some("git: main"), None, None),
                     &theme,
                 )
             })
@@ -389,7 +430,14 @@ mod tests {
         let area = Rect::new(0, 0, 30, 1);
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None, None, None, &theme))
+            .draw(|frame| {
+                render_bottom_bar(
+                    frame,
+                    area,
+                    BottomBarState::new(None, None, None, None, None),
+                    &theme,
+                )
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -422,10 +470,13 @@ mod tests {
                 render_bottom_bar(
                     frame,
                     area,
-                    Some(&metadata_line),
-                    None,
-                    Some("git: main"),
-                    Some(&feedback),
+                    BottomBarState::new(
+                        Some(&metadata_line),
+                        None,
+                        Some("git: main"),
+                        None,
+                        Some(&feedback),
+                    ),
                     &theme,
                 )
             })
@@ -436,6 +487,56 @@ mod tests {
 
         assert!(line.contains("preview: on"));
         assert!(line.contains("size: 7 B"));
+    }
+
+    #[test]
+    fn render_bottom_bar_shows_user_notice() {
+        let notice = UserNotice::new(UserNoticeLevel::Info, "exit=0", "shell");
+
+        let backend = TestBackend::new(60, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 60, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
+        terminal
+            .draw(|frame| {
+                render_bottom_bar(
+                    frame,
+                    area,
+                    BottomBarState::new(None, None, None, Some(&notice), None),
+                    &theme,
+                )
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 60);
+
+        assert!(line.contains("shell: exit=0"));
+    }
+
+    #[test]
+    fn user_notice_uses_semantic_color() {
+        let notice = UserNotice::new(UserNoticeLevel::Warn, "save failed", "session");
+
+        let backend = TestBackend::new(60, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 60, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
+        terminal
+            .draw(|frame| {
+                render_bottom_bar(
+                    frame,
+                    area,
+                    BottomBarState::new(None, None, None, Some(&notice), None),
+                    &theme,
+                )
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let style = find_cell_style(buffer, "session").expect("style not found");
+
+        assert_eq!(style.fg, Some(to_color(theme.semantic.warn)));
     }
 
     #[test]
@@ -463,7 +564,14 @@ mod tests {
         let area = Rect::new(0, 0, 60, 1);
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None, None, Some(&feedback), &theme))
+            .draw(|frame| {
+                render_bottom_bar(
+                    frame,
+                    area,
+                    BottomBarState::new(None, None, None, None, Some(&feedback)),
+                    &theme,
+                )
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -490,7 +598,14 @@ mod tests {
         let area = Rect::new(0, 0, 40, 1);
         let theme = ColorThemeId::GlacierCoast.theme();
         terminal
-            .draw(|frame| render_bottom_bar(frame, area, None, None, None, Some(&feedback), &theme))
+            .draw(|frame| {
+                render_bottom_bar(
+                    frame,
+                    area,
+                    BottomBarState::new(None, None, None, None, Some(&feedback)),
+                    &theme,
+                )
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -623,10 +738,7 @@ mod tests {
                 render_bottom_bar(
                     frame,
                     area,
-                    None,
-                    Some(MetadataStatus::Loading),
-                    None,
-                    None,
+                    BottomBarState::new(None, Some(MetadataStatus::Loading), None, None, None),
                     &theme,
                 )
             })
@@ -649,10 +761,7 @@ mod tests {
                 render_bottom_bar(
                     frame,
                     area,
-                    None,
-                    Some(MetadataStatus::Error),
-                    None,
-                    None,
+                    BottomBarState::new(None, Some(MetadataStatus::Error), None, None, None),
                     &theme,
                 )
             })

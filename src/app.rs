@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config::{Config, ConfigEvent, poll_config_events};
+use crate::core::user_notice::{UserNotice, UserNoticeLevel, UserNoticeQueue};
 use crate::core::{
     ColorTheme, ColorThemeId, Entry, SessionEvent, SessionTab, ShellCommandError,
     ShellCommandRequest, ShellEvent, ShellExecutionResult, ShellPermission, ShellWorker,
@@ -73,6 +74,7 @@ pub struct App {
     slash_input_active: bool,
     slash_input_buffer: String,
     slash_feedback: Option<SlashFeedback>,
+    user_notice_queue: UserNoticeQueue,
     preview_visible: bool,
     preview_paused: bool,
     preview_ratio_percent: u16,
@@ -134,6 +136,7 @@ impl App {
             slash_input_active: false,
             slash_input_buffer: String::new(),
             slash_feedback: None,
+            user_notice_queue: UserNoticeQueue::new(),
             preview_visible: false,
             preview_paused: false,
             preview_ratio_percent: 35,
@@ -173,6 +176,7 @@ impl App {
             slash_input_active: false,
             slash_input_buffer: String::new(),
             slash_feedback: None,
+            user_notice_queue: UserNoticeQueue::new(),
             preview_visible: false,
             preview_paused: false,
             preview_ratio_percent: 35,
@@ -358,6 +362,14 @@ impl App {
             return None;
         }
         Some(feedback)
+    }
+
+    fn push_user_notice(&mut self, notice: UserNotice) {
+        let _ = self.user_notice_queue.push(notice, self.clock.now());
+    }
+
+    pub fn user_notice(&mut self) -> Option<UserNotice> {
+        self.user_notice_queue.current(self.clock.now()).cloned()
     }
 
     pub fn shell_output_active(&self) -> bool {
@@ -670,11 +682,15 @@ impl App {
                 }
                 ShellEvent::Finished(result) => {
                     self.shell_output_view.finish(&result);
-                    self.slash_feedback = Some(self.shell_result_feedback(&result));
+                    self.push_user_notice(UserNotice::new(
+                        shell_result_notice_level(&result),
+                        format_shell_notice(&result),
+                        "shell",
+                    ));
                 }
                 ShellEvent::Failed(error) => {
                     self.shell_output_view.append_stderr_line(&error);
-                    self.slash_feedback = Some(self.timed_feedback(error, FeedbackStatus::Error));
+                    self.push_user_notice(UserNotice::new(UserNoticeLevel::Error, error, "shell"));
                 }
             }
         }
@@ -684,11 +700,12 @@ impl App {
         for event in poll_session_events() {
             match event {
                 SessionEvent::SaveFailed => {
-                    self.slash_feedback =
-                        Some(self.timed_feedback(
-                            "session: save failed".to_string(),
-                            FeedbackStatus::Error,
-                        ));
+                    self.push_user_notice(UserNotice::with_ttl_ms(
+                        UserNoticeLevel::Warn,
+                        "save failed",
+                        "session",
+                        None,
+                    ));
                 }
             }
         }
@@ -908,6 +925,11 @@ impl App {
 
     fn handle_shell_command(&mut self, command: &SlashCommand) -> SlashFeedback {
         if !self.shell_permission.is_allowed() {
+            self.push_user_notice(UserNotice::new(
+                UserNoticeLevel::Warn,
+                "Shell commands disabled",
+                "shell",
+            ));
             return self
                 .timed_feedback("Shell commands disabled".to_string(), FeedbackStatus::Warn);
         }
@@ -922,6 +944,11 @@ impl App {
         };
         self.shell_output_view.start(&request);
         self.shell_worker.request(request);
+        self.push_user_notice(UserNotice::new(
+            UserNoticeLevel::Info,
+            format_shell_start_notice(raw),
+            "shell",
+        ));
         self.timed_feedback("shell: running".to_string(), FeedbackStatus::Success)
     }
 
@@ -1059,14 +1086,6 @@ impl App {
 
     fn shell_error_feedback(&self, error: ShellCommandError) -> SlashFeedback {
         self.timed_feedback(error.to_string(), FeedbackStatus::Error)
-    }
-
-    fn shell_result_feedback(&self, result: &ShellExecutionResult) -> SlashFeedback {
-        let status = match result.status_code {
-            Some(0) => FeedbackStatus::Success,
-            _ => FeedbackStatus::Error,
-        };
-        self.timed_feedback(format_shell_result(result), status)
     }
 
     fn announce_active_tab_color(&mut self) {
@@ -1459,12 +1478,25 @@ fn slice_line(line: &str, offset: usize, width: usize) -> String {
     line.chars().skip(offset).take(width).collect()
 }
 
-fn format_shell_result(result: &ShellExecutionResult) -> String {
+fn format_shell_start_notice(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "started".to_string();
+    }
+    let compact = compact_output(trimmed, 40).unwrap_or_else(|| trimmed.to_string());
+    format!("{compact}; started")
+}
+
+fn shell_result_notice_level(result: &ShellExecutionResult) -> UserNoticeLevel {
+    match result.status_code {
+        Some(0) => UserNoticeLevel::Success,
+        _ => UserNoticeLevel::Error,
+    }
+}
+
+fn format_shell_notice(result: &ShellExecutionResult) -> String {
     let exit = result.status_code.unwrap_or(-1);
-    let mut parts = vec![
-        format!("shell: exit={exit}"),
-        format!("{}ms", result.duration_ms),
-    ];
+    let mut parts = vec![format!("exit={exit}"), format!("{}ms", result.duration_ms)];
     if let Some(stdout) = compact_output(&result.stdout, 80) {
         parts.push(format!("stdout={stdout}"));
     }
@@ -1992,6 +2024,37 @@ mod slash_tests {
 
         assert_eq!(feedback.status, FeedbackStatus::Warn);
         assert!(feedback.text.contains("disabled"));
+    }
+
+    #[test]
+    fn shell_command_emits_user_notice_on_start() {
+        let mut app = empty_app();
+        app.shell_permission = ShellPermission::new(true, true);
+
+        let _ = app.handle_slash_command(&SlashCommand {
+            name: "shell".to_string(),
+            args: vec!["echo".to_string(), "hi".to_string()],
+            raw: "/shell echo hi".to_string(),
+        });
+
+        let notice = app.user_notice().expect("notice");
+        assert_eq!(notice.source, "shell");
+        assert_eq!(notice.level, UserNoticeLevel::Info);
+        assert!(notice.text.contains("started"));
+    }
+
+    #[test]
+    fn session_save_failure_emits_user_notice() {
+        let mut app = empty_app();
+
+        let _ = crate::core::poll_session_events();
+        crate::core::push_session_event_for_test(SessionEvent::SaveFailed);
+        app.poll_session_events();
+
+        let notice = app.user_notice().expect("notice");
+        assert_eq!(notice.source, "session");
+        assert_eq!(notice.level, UserNoticeLevel::Warn);
+        assert!(notice.text.contains("save failed"));
     }
 
     #[test]

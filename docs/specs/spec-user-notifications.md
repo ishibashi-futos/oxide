@@ -63,7 +63,6 @@ UI は `UserNotice` を受け取り、Bottom Bar に表示する。
 
 表示例: `✅ shell: exit=0`
 
-
 ## 7. 既存機能との対応
 
 ### 7.1 スラッシュコマンド
@@ -74,7 +73,7 @@ UI は `UserNotice` を受け取り、Bottom Bar に表示する。
 
 ### 7.2 `/shell`
 
-- 実行開始: `Info`（例: `shell: ls -al...; running`）。
+- 実行開始: `Info`（例: `shell: ls -al...; started`）。
 - 実行成功: `Success`（例: `shell: cargo bui...; exit=0`）。
 - 実行失敗: `Error`（例: `shell: docker ru...; exit=1`）。
 
@@ -95,6 +94,19 @@ UI は `UserNotice` を受け取り、Bottom Bar に表示する。
 
 ## 9. TODO
 
-- `UserNotice` の共通イベント実装。
-- `SlashFeedback` から `UserNotice` への統合。
-- セッション保存の失敗通知実装。
+- [x] `UserNotice` の共通イベント実装。
+- [x] `SlashFeedback` から `UserNotice` への統合。
+- [ ] セッション保存の失敗通知実装。
+
+### 公開仕様
+
+- 呼び出し側は `UserNotice` を作って渡す。
+  - `level`、`text`、`source` が必須。
+  - `ttl_ms` は必要に応じて指定する。
+- `UserNotice::new` は全レベルの既定 TTL を `4000ms` にする。
+- `Warn`/`Error` でも長く残したい場合は `UserNotice::with_ttl_ms` で TTL を長くするか、`None` を指定して残す。
+- 既定と違う TTL にしたい場合は `UserNotice::with_ttl_ms` を使う。
+- `UserNoticeQueue::push` は優先度に従って置き換える。
+  - `Error` > `Warn` > `Success`/`Info`。
+  - 同じ優先度なら上書きする。
+- `UserNoticeQueue::current` は TTL を見て自動で消す。

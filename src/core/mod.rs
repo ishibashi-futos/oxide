@@ -7,6 +7,7 @@ mod shell;
 mod shell_worker;
 mod slash_command;
 mod theme;
+pub mod user_notice;
 
 pub use entries::{Entry, list_entries};
 pub use git::GitWorker;
@@ -18,6 +19,8 @@ pub use preview::{
     PreviewContent, PreviewError, PreviewEvent, PreviewFailed, PreviewReady, PreviewRequest,
     load_preview,
 };
+#[cfg(test)]
+pub(crate) use session::push_session_event_for_test;
 pub use session::{
     SessionEvent, SessionTab, load_session_tabs, poll_session_events, save_session_async,
 };
