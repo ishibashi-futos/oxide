@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config::{Config, ConfigEvent, poll_config_events};
-use crate::core::user_notice::{UserNotice, UserNoticeQueue};
+use crate::core::user_notice::{UserNotice, UserNoticeLevel, UserNoticeQueue};
 use crate::core::{
     ColorTheme, ColorThemeId, Entry, SessionEvent, SessionTab, ShellCommandError,
     ShellCommandRequest, ShellEvent, ShellExecutionResult, ShellPermission, ShellWorker,
@@ -364,6 +364,10 @@ impl App {
         Some(feedback)
     }
 
+    fn push_user_notice(&mut self, notice: UserNotice) {
+        let _ = self.user_notice_queue.push(notice, self.clock.now());
+    }
+
     pub fn user_notice(&mut self) -> Option<UserNotice> {
         self.user_notice_queue.current(self.clock.now()).cloned()
     }
@@ -678,11 +682,15 @@ impl App {
                 }
                 ShellEvent::Finished(result) => {
                     self.shell_output_view.finish(&result);
-                    self.slash_feedback = Some(self.shell_result_feedback(&result));
+                    self.push_user_notice(UserNotice::new(
+                        shell_result_notice_level(&result),
+                        format_shell_notice(&result),
+                        "shell",
+                    ));
                 }
                 ShellEvent::Failed(error) => {
                     self.shell_output_view.append_stderr_line(&error);
-                    self.slash_feedback = Some(self.timed_feedback(error, FeedbackStatus::Error));
+                    self.push_user_notice(UserNotice::new(UserNoticeLevel::Error, error, "shell"));
                 }
             }
         }
@@ -916,6 +924,11 @@ impl App {
 
     fn handle_shell_command(&mut self, command: &SlashCommand) -> SlashFeedback {
         if !self.shell_permission.is_allowed() {
+            self.push_user_notice(UserNotice::new(
+                UserNoticeLevel::Warn,
+                "Shell commands disabled",
+                "shell",
+            ));
             return self
                 .timed_feedback("Shell commands disabled".to_string(), FeedbackStatus::Warn);
         }
@@ -930,6 +943,11 @@ impl App {
         };
         self.shell_output_view.start(&request);
         self.shell_worker.request(request);
+        self.push_user_notice(UserNotice::new(
+            UserNoticeLevel::Info,
+            format_shell_start_notice(raw),
+            "shell",
+        ));
         self.timed_feedback("shell: running".to_string(), FeedbackStatus::Success)
     }
 
@@ -1069,13 +1087,6 @@ impl App {
         self.timed_feedback(error.to_string(), FeedbackStatus::Error)
     }
 
-    fn shell_result_feedback(&self, result: &ShellExecutionResult) -> SlashFeedback {
-        let status = match result.status_code {
-            Some(0) => FeedbackStatus::Success,
-            _ => FeedbackStatus::Error,
-        };
-        self.timed_feedback(format_shell_result(result), status)
-    }
 
     fn announce_active_tab_color(&mut self) {
         let theme_id = self.tabs.active_theme_id();
@@ -1467,12 +1478,25 @@ fn slice_line(line: &str, offset: usize, width: usize) -> String {
     line.chars().skip(offset).take(width).collect()
 }
 
-fn format_shell_result(result: &ShellExecutionResult) -> String {
+fn format_shell_start_notice(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "started".to_string();
+    }
+    let compact = compact_output(trimmed, 40).unwrap_or_else(|| trimmed.to_string());
+    format!("{compact}; started")
+}
+
+fn shell_result_notice_level(result: &ShellExecutionResult) -> UserNoticeLevel {
+    match result.status_code {
+        Some(0) => UserNoticeLevel::Success,
+        _ => UserNoticeLevel::Error,
+    }
+}
+
+fn format_shell_notice(result: &ShellExecutionResult) -> String {
     let exit = result.status_code.unwrap_or(-1);
-    let mut parts = vec![
-        format!("shell: exit={exit}"),
-        format!("{}ms", result.duration_ms),
-    ];
+    let mut parts = vec![format!("exit={exit}"), format!("{}ms", result.duration_ms)];
     if let Some(stdout) = compact_output(&result.stdout, 80) {
         parts.push(format!("stdout={stdout}"));
     }
@@ -2000,6 +2024,23 @@ mod slash_tests {
 
         assert_eq!(feedback.status, FeedbackStatus::Warn);
         assert!(feedback.text.contains("disabled"));
+    }
+
+    #[test]
+    fn shell_command_emits_user_notice_on_start() {
+        let mut app = empty_app();
+        app.shell_permission = ShellPermission::new(true, true);
+
+        let _ = app.handle_slash_command(&SlashCommand {
+            name: "shell".to_string(),
+            args: vec!["echo".to_string(), "hi".to_string()],
+            raw: "/shell echo hi".to_string(),
+        });
+
+        let notice = app.user_notice().expect("notice");
+        assert_eq!(notice.source, "shell");
+        assert_eq!(notice.level, UserNoticeLevel::Info);
+        assert!(notice.text.contains("started"));
     }
 
     #[test]
