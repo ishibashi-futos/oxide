@@ -94,6 +94,8 @@ pub fn download_and_verify_asset(
 fn unpack_if_needed(path: &Path, asset_name: &str) -> Result<PathBuf, SelfUpdateError> {
     if is_tar_gz(asset_name) {
         extract_tar_gz(path, asset_name)
+    } else if is_zip(asset_name) {
+        extract_zip(path, asset_name)
     } else {
         Ok(path.to_path_buf())
     }
@@ -101,6 +103,10 @@ fn unpack_if_needed(path: &Path, asset_name: &str) -> Result<PathBuf, SelfUpdate
 
 fn is_tar_gz(name: &str) -> bool {
     name.ends_with(".tar.gz") || name.ends_with(".tgz")
+}
+
+fn is_zip(name: &str) -> bool {
+    name.ends_with(".zip")
 }
 
 fn extract_tar_gz(path: &Path, asset_name: &str) -> Result<PathBuf, SelfUpdateError> {
@@ -116,12 +122,54 @@ fn extract_tar_gz(path: &Path, asset_name: &str) -> Result<PathBuf, SelfUpdateEr
         .ok_or_else(|| SelfUpdateError::MissingBinaryInArchive(asset_name.to_string()))
 }
 
+fn extract_zip(path: &Path, asset_name: &str) -> Result<PathBuf, SelfUpdateError> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| SelfUpdateError::Io(std::io::Error::other("time error")))?;
+    let mut dir = std::env::temp_dir();
+    let safe_name = asset_name.replace('/', "_");
+    dir.push(format!("ox-extract-{}-{}", stamp.as_millis(), safe_name));
+    std::fs::create_dir_all(&dir)?;
+    extract_zip_to(path, &dir)?;
+    find_binary_in_dir(&dir)
+        .ok_or_else(|| SelfUpdateError::MissingBinaryInArchive(asset_name.to_string()))
+}
+
 fn extract_tar_gz_to(path: &Path, dir: &Path) -> Result<(), SelfUpdateError> {
     let file = std::fs::File::open(path)?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
     archive.unpack(dir)?;
     Ok(())
+}
+
+fn extract_zip_to(path: &Path, dir: &Path) -> Result<(), SelfUpdateError> {
+    let file = std::fs::File::open(path)?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|err| zip_error("zip open failed", err))?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|err| zip_error("zip read failed", err))?;
+        let Some(entry_path) = entry.enclosed_name() else {
+            continue;
+        };
+        let outpath = dir.join(entry_path);
+        if entry.name().ends_with('/') {
+            std::fs::create_dir_all(&outpath)?;
+        } else {
+            if let Some(parent) = outpath.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut outfile = std::fs::File::create(&outpath)?;
+            std::io::copy(&mut entry, &mut outfile)?;
+        }
+    }
+    Ok(())
+}
+
+fn zip_error(context: &'static str, err: zip::result::ZipError) -> SelfUpdateError {
+    SelfUpdateError::Io(std::io::Error::other(format!("{context}: {err}")))
 }
 
 fn find_binary_in_dir(dir: &Path) -> Option<PathBuf> {
@@ -152,5 +200,44 @@ fn is_binary_name(path: &Path) -> bool {
     #[cfg(not(windows))]
     {
         name == "ox"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn unpack_if_needed_extracts_zip_binary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let zip_path = dir.path().join("ox.zip");
+        let binary_name = expected_binary_name();
+        let payload = b"hello";
+
+        let file = std::fs::File::create(&zip_path).expect("zip file");
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::FileOptions::default();
+        writer
+            .start_file(format!("bin/{binary_name}"), options)
+            .expect("start file");
+        writer.write_all(payload).expect("write");
+        writer.finish().expect("finish");
+
+        let extracted = unpack_if_needed(&zip_path, "ox.zip").expect("extract");
+        let name = extracted.file_name().and_then(|value| value.to_str());
+        assert_eq!(name, Some(binary_name));
+        let contents = std::fs::read(&extracted).expect("read");
+        assert_eq!(contents, payload);
+    }
+
+    #[cfg(windows)]
+    fn expected_binary_name() -> &'static str {
+        "ox.exe"
+    }
+
+    #[cfg(not(windows))]
+    fn expected_binary_name() -> &'static str {
+        "ox"
     }
 }

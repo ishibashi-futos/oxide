@@ -75,6 +75,8 @@ jobs:
           toolchain: 1.92.0
           targets: ${{ matrix.target }}
       - name: Build (release)
+        env:
+          OX_BUILD_VERSION: ${{ github.ref_name }}
         run: cargo build --release --target ${{ matrix.target }}
       - name: Package artifact (unix)
         if: runner.os != 'Windows'
