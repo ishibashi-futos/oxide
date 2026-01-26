@@ -5,12 +5,12 @@ use std::time::{Duration, Instant};
 
 use crate::config::Config;
 use crate::core::{
-    ColorTheme, ColorThemeId, Entry, ShellCommandError, ShellCommandRequest, ShellEvent,
-    ShellExecutionResult, ShellPermission, ShellWorker, SlashCommand, SlashCommandError,
-    list_entries, parse_slash_command,
+    ColorTheme, ColorThemeId, Entry, SessionTab, ShellCommandError, ShellCommandRequest,
+    ShellEvent, ShellExecutionResult, ShellPermission, ShellWorker, SlashCommand,
+    SlashCommandError, list_entries, load_session_tabs, parse_slash_command, save_session_async,
 };
 use crate::error::{AppError, AppResult};
-use crate::tabs::{TabSummary, TabsState};
+use crate::tabs::{TabSummary, TabsEvent, TabsState};
 
 pub trait EntryOpener {
     fn open(&self, path: &Path) -> AppResult<()>;
@@ -26,6 +26,34 @@ struct SystemClock;
 impl AppClock for SystemClock {
     fn now(&self) -> Instant {
         Instant::now()
+    }
+}
+
+#[allow(dead_code)]
+trait ConfigLoader {
+    fn load(&self) -> Config;
+}
+
+#[allow(dead_code)]
+struct DefaultConfigLoader;
+
+impl ConfigLoader for DefaultConfigLoader {
+    fn load(&self) -> Config {
+        Config::load()
+    }
+}
+
+#[allow(dead_code)]
+trait SessionLoader {
+    fn load_tabs(&self) -> Vec<SessionTab>;
+}
+
+#[allow(dead_code)]
+struct DefaultSessionLoader;
+
+impl SessionLoader for DefaultSessionLoader {
+    fn load_tabs(&self) -> Vec<SessionTab> {
+        load_session_tabs()
     }
 }
 
@@ -54,9 +82,12 @@ pub struct App {
     shell_worker: ShellWorker,
     shell_output_view: ShellOutputView,
     shell_output_active: bool,
+    session_save_pending: bool,
+    session_save_deadline: Option<Instant>,
 }
 
 const SLASH_FEEDBACK_TTL: Duration = Duration::from_secs(4);
+const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 
 impl App {
     #[allow(dead_code)]
@@ -112,22 +143,91 @@ impl App {
             shell_worker: ShellWorker::new(),
             shell_output_view: ShellOutputView::new(),
             shell_output_active: false,
+            session_save_pending: false,
+            session_save_deadline: None,
         }
     }
 
-    pub fn load(current_dir: PathBuf) -> AppResult<Self> {
-        let show_hidden = false;
-        let entries = list_entries(&current_dir, show_hidden)?;
-        let parent_entries = list_parent_entries(&current_dir, show_hidden)?;
-        let cursor = if entries.is_empty() { None } else { Some(0) };
-        let config = Config::load();
-        Ok(Self::new_with_config(
+    fn new_with_tabs(
+        current_dir: PathBuf,
+        entries: Vec<Entry>,
+        parent_entries: Vec<Entry>,
+        cursor: Option<usize>,
+        show_hidden: bool,
+        config: Config,
+        tabs: TabsState,
+    ) -> Self {
+        let clock = Arc::new(SystemClock);
+        Self {
             current_dir,
             entries,
             parent_entries,
             cursor,
             show_hidden,
+            clock,
+            tabs,
+            tab_color_changed: None,
+            search_buffer: String::new(),
+            search_origin: None,
+            slash_input_active: false,
+            slash_input_buffer: String::new(),
+            slash_feedback: None,
+            preview_visible: false,
+            preview_paused: false,
+            preview_ratio_percent: 35,
+            slash_history: Vec::new(),
+            slash_history_index: None,
+            shell_permission: ShellPermission::from_env(config.allow_shell),
+            allow_opener: config.allow_opener,
+            shell_worker: ShellWorker::new(),
+            shell_output_view: ShellOutputView::new(),
+            shell_output_active: false,
+            session_save_pending: false,
+            session_save_deadline: None,
+        }
+    }
+
+    pub fn load(current_dir: PathBuf) -> AppResult<Self> {
+        let config_loader = DefaultConfigLoader;
+        let session_loader = DefaultSessionLoader;
+        Self::load_with(current_dir, &config_loader, &session_loader)
+    }
+
+    fn load_with(
+        current_dir: PathBuf,
+        config_loader: &dyn ConfigLoader,
+        session_loader: &dyn SessionLoader,
+    ) -> AppResult<Self> {
+        let show_hidden = false;
+        let config = config_loader.load();
+        let session_tabs = session_loader
+            .load_tabs()
+            .into_iter()
+            .filter(|tab| tab.path.is_dir())
+            .collect::<Vec<_>>();
+        let (tabs, restored_dir) = if session_tabs.is_empty() {
+            (
+                TabsState::new(current_dir.clone(), config.default_theme),
+                current_dir,
+            )
+        } else {
+            let restored_dir = session_tabs[0].path.clone();
+            (
+                TabsState::from_session(session_tabs, config.default_theme),
+                restored_dir,
+            )
+        };
+        let entries = list_entries(&restored_dir, show_hidden)?;
+        let parent_entries = list_parent_entries(&restored_dir, show_hidden)?;
+        let cursor = if entries.is_empty() { None } else { Some(0) };
+        Ok(Self::new_with_tabs(
+            restored_dir,
+            entries,
+            parent_entries,
+            cursor,
+            show_hidden,
             config,
+            tabs,
         ))
     }
 
@@ -238,6 +338,29 @@ impl App {
         }
     }
 
+    pub fn flush_session_save(&mut self) {
+        if !self.session_save_pending {
+            return;
+        }
+        let Some(deadline) = self.session_save_deadline else {
+            return;
+        };
+        if self.clock.now() < deadline {
+            return;
+        }
+        self.session_save_pending = false;
+        self.session_save_deadline = None;
+        let tabs = self.tabs.session_tabs();
+        save_session_async(tabs);
+    }
+
+    pub fn force_session_save(&mut self) {
+        self.session_save_pending = false;
+        self.session_save_deadline = None;
+        let tabs = self.tabs.session_tabs();
+        save_session_async(tabs);
+    }
+
     pub fn page_up_shell_output(&mut self) {
         if self.shell_output_active {
             self.shell_output_view.page_up();
@@ -302,6 +425,7 @@ impl App {
         self.tabs.push_new(self.current_dir.as_path());
         self.announce_active_tab_color();
         self.clear_search_state();
+        self.handle_tab_events();
         Ok(())
     }
 
@@ -619,11 +743,8 @@ impl App {
 
     fn change_dir(&mut self, path: PathBuf) {
         self.set_current_dir(path);
-        self.store_active_tab();
-    }
-
-    fn store_active_tab(&mut self) {
-        self.tabs.store_active(self.current_dir.as_path());
+        self.tabs.update_active_path(self.current_dir.as_path());
+        self.handle_tab_events();
     }
 
     fn switch_to_tab(&mut self, index: usize) -> AppResult<()> {
@@ -633,6 +754,7 @@ impl App {
         self.set_current_dir(next_dir);
         self.announce_active_tab_color();
         self.refresh()?;
+        self.handle_tab_events();
         Ok(())
     }
 
@@ -715,6 +837,7 @@ impl App {
             tab_id: preference.tab_id,
             theme,
         });
+        self.handle_tab_events();
         match context {
             CommandContext::Tab(_) => {
                 self.timed_feedback(format!("theme: {}", theme.name), FeedbackStatus::Success)
@@ -748,6 +871,17 @@ impl App {
             status: FeedbackStatus::Success,
             tabs: Some(summaries),
             expires_at: self.clock.now() + SLASH_FEEDBACK_TTL,
+        }
+    }
+
+    fn handle_tab_events(&mut self) {
+        let events = self.tabs.take_events();
+        if events.is_empty() {
+            return;
+        }
+        if events.iter().any(should_save_session) {
+            self.session_save_pending = true;
+            self.session_save_deadline = Some(self.clock.now() + SESSION_SAVE_DEBOUNCE);
         }
     }
 
@@ -936,6 +1070,14 @@ fn format_slash_error(error: SlashCommandError) -> &'static str {
     match error {
         SlashCommandError::MissingSlash => "missing '/'",
         SlashCommandError::MissingName => "missing command",
+    }
+}
+
+fn should_save_session(event: &TabsEvent) -> bool {
+    match event {
+        TabsEvent::ActivePathChanged { .. }
+        | TabsEvent::ActiveThemeChanged { .. }
+        | TabsEvent::TabAdded { .. } => true,
     }
 }
 
@@ -1304,6 +1446,38 @@ mod slash_tests {
         App::new(PathBuf::from("."), Vec::new(), Vec::new(), None, false)
     }
 
+    #[derive(Clone)]
+    struct FixedConfigLoader {
+        config: Config,
+    }
+
+    impl ConfigLoader for FixedConfigLoader {
+        fn load(&self) -> Config {
+            self.config.clone()
+        }
+    }
+
+    #[derive(Clone)]
+    struct FixedSessionLoader {
+        tabs: Vec<SessionTab>,
+    }
+
+    impl SessionLoader for FixedSessionLoader {
+        fn load_tabs(&self) -> Vec<SessionTab> {
+            self.tabs.clone()
+        }
+    }
+
+    fn load_app_with(current_dir: PathBuf, config: Config, tabs: Vec<SessionTab>) -> App {
+        let config_loader = FixedConfigLoader { config };
+        let session_loader = FixedSessionLoader { tabs };
+        App::load_with(current_dir, &config_loader, &session_loader).unwrap()
+    }
+
+    fn load_app(current_dir: PathBuf) -> App {
+        load_app_with(current_dir, Config::default(), Vec::new())
+    }
+
     fn app_with_two_tabs() -> (tempfile::TempDir, App, PathBuf, PathBuf) {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir_one = temp_dir.path().join("one");
@@ -1311,7 +1485,7 @@ mod slash_tests {
         std::fs::create_dir(&dir_one).unwrap();
         std::fs::create_dir(&dir_two).unwrap();
 
-        let mut app = App::load(dir_one.clone()).unwrap();
+        let mut app = load_app(dir_one.clone());
         app.new_tab().unwrap();
         app.change_dir(dir_two.clone());
 
@@ -1515,7 +1689,7 @@ mod slash_tests {
         std::fs::create_dir(temp_dir.path().join("dir")).unwrap();
         std::fs::write(temp_dir.path().join("diary.txt"), "note").unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.slash_input_active = true;
         app.slash_input_buffer = "/shell ./build.sh ./di".to_string();
 
@@ -1535,7 +1709,7 @@ mod slash_tests {
         std::fs::create_dir(temp_dir.path().join("dir")).unwrap();
         std::fs::write(temp_dir.path().join("diary.txt"), "note").unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.slash_input_active = true;
         app.slash_input_buffer = "/shell ./build.sh ./di".to_string();
 
@@ -1549,7 +1723,7 @@ mod slash_tests {
         let temp_dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(temp_dir.path().join("src")).unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.slash_input_active = true;
         app.slash_input_buffer = "/shell ./sr".to_string();
 
@@ -1571,7 +1745,7 @@ mod slash_tests {
             timestamp_ms: 1,
         };
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.shell_output_view.reset(&request, &result);
         let before = app.shell_output_view.lines.clone();
         app.slash_input_active = true;
@@ -1580,6 +1754,37 @@ mod slash_tests {
         app.complete_slash_candidate();
 
         assert_eq!(app.shell_output_view.lines, before);
+    }
+
+    #[test]
+    fn load_restores_multiple_tabs_from_session() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir_one = temp_dir.path().join("one");
+        let dir_two = temp_dir.path().join("two");
+        std::fs::create_dir(&dir_one).unwrap();
+        std::fs::create_dir(&dir_two).unwrap();
+
+        let session_tabs = vec![
+            SessionTab {
+                tab_id: 4,
+                path: dir_one.clone(),
+                theme_name: "Night Harbor".to_string(),
+            },
+            SessionTab {
+                tab_id: 8,
+                path: dir_two.clone(),
+                theme_name: "Glacier Coast".to_string(),
+            },
+        ];
+        let app = load_app_with(PathBuf::from("/fallback"), Config::default(), session_tabs);
+
+        assert_eq!(app.current_dir, dir_one);
+        assert_eq!(app.tabs.count(), 2);
+        let restored_tabs = app.tabs.session_tabs();
+        assert_eq!(restored_tabs[0].path, dir_one);
+        assert_eq!(restored_tabs[1].path, dir_two);
+        assert_eq!(restored_tabs[0].theme_name, "Night Harbor");
+        assert_eq!(restored_tabs[1].theme_name, "Glacier Coast");
     }
 
     #[test]
@@ -1892,6 +2097,38 @@ fn clamp_cursor(entries: &[Entry], index: usize) -> Option<usize> {
 mod tests {
     use super::*;
 
+    #[derive(Clone)]
+    struct FixedConfigLoader {
+        config: Config,
+    }
+
+    impl ConfigLoader for FixedConfigLoader {
+        fn load(&self) -> Config {
+            self.config.clone()
+        }
+    }
+
+    #[derive(Clone)]
+    struct FixedSessionLoader {
+        tabs: Vec<SessionTab>,
+    }
+
+    impl SessionLoader for FixedSessionLoader {
+        fn load_tabs(&self) -> Vec<SessionTab> {
+            self.tabs.clone()
+        }
+    }
+
+    fn load_app_with(current_dir: PathBuf, config: Config, tabs: Vec<SessionTab>) -> App {
+        let config_loader = FixedConfigLoader { config };
+        let session_loader = FixedSessionLoader { tabs };
+        App::load_with(current_dir, &config_loader, &session_loader).unwrap()
+    }
+
+    fn load_app(current_dir: PathBuf) -> App {
+        load_app_with(current_dir, Config::default(), Vec::new())
+    }
+
     #[test]
     fn move_cursor_up_stops_at_top() {
         let mut app = App::new(
@@ -2111,7 +2348,7 @@ mod tests {
         let child_dir = temp_dir.path().join("child");
         std::fs::create_dir(&child_dir).unwrap();
 
-        let mut app = App::load(child_dir).unwrap();
+        let mut app = load_app(child_dir);
 
         app.move_to_parent().unwrap();
 
@@ -2128,7 +2365,7 @@ mod tests {
         std::fs::create_dir(&other).unwrap();
         std::fs::create_dir(&target).unwrap();
 
-        let mut app = App::load(target.clone()).unwrap();
+        let mut app = load_app(target.clone());
 
         app.move_to_parent().unwrap();
 
@@ -2145,7 +2382,7 @@ mod tests {
         let hidden = temp_dir.path().join(".secret");
         std::fs::write(&hidden, "hidden").unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         assert!(app.entries.is_empty());
 
         app.toggle_hidden().unwrap();
@@ -2166,7 +2403,7 @@ mod tests {
         std::fs::write(temp_dir.path().join("a.txt"), "a").unwrap();
         std::fs::write(temp_dir.path().join("b.txt"), "b").unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.cursor = Some(1);
 
         app.toggle_hidden().unwrap();
@@ -2184,7 +2421,7 @@ mod tests {
         std::fs::write(temp_dir.path().join("a.txt"), "a").unwrap();
         std::fs::write(temp_dir.path().join("b.txt"), "b").unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.toggle_hidden().unwrap();
         app.cursor = Some(0);
 
@@ -2305,7 +2542,7 @@ mod tests {
         std::fs::create_dir(&dir_one).unwrap();
         std::fs::create_dir(&dir_two).unwrap();
 
-        let mut app = App::load(dir_one.clone()).unwrap();
+        let mut app = load_app(dir_one.clone());
         app.new_tab().unwrap();
 
         app.change_dir(dir_two.clone());

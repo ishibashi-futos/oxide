@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::core::ColorThemeId;
+use crate::core::{ColorThemeId, SessionTab};
 
 #[derive(Debug, Clone)]
 pub(crate) struct TabsState {
@@ -8,6 +8,7 @@ pub(crate) struct TabsState {
     active: usize,
     next_id: u64,
     rotation: ThemeRotation,
+    events: Vec<TabsEvent>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +31,13 @@ pub(crate) struct TabSummary {
     pub(crate) active: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TabsEvent {
+    ActivePathChanged { tab_id: u64, path: PathBuf },
+    ActiveThemeChanged { tab_id: u64, theme_id: ColorThemeId },
+    TabAdded { tab_id: u64, path: PathBuf },
+}
+
 #[derive(Debug, Clone)]
 struct ThemeRotation {
     order: Vec<ColorThemeId>,
@@ -50,6 +58,32 @@ impl TabsState {
             active: 0,
             next_id: 2,
             rotation,
+            events: Vec::new(),
+        }
+    }
+
+    pub(crate) fn from_session(tabs: Vec<SessionTab>, default_theme: Option<ColorThemeId>) -> Self {
+        let fallback = default_theme.unwrap_or(ColorThemeId::GlacierCoast);
+        let mut max_id = 0;
+        let restored_tabs = tabs
+            .into_iter()
+            .map(|tab| {
+                let theme_id = ColorThemeId::from_name(&tab.theme_name).unwrap_or(fallback);
+                max_id = max_id.max(tab.tab_id);
+                Tab {
+                    id: tab.tab_id,
+                    path: tab.path,
+                    theme_id,
+                }
+            })
+            .collect::<Vec<_>>();
+        let next_id = max_id.saturating_add(1).max(1);
+        Self {
+            tabs: restored_tabs,
+            active: 0,
+            next_id,
+            rotation: ThemeRotation::new(fallback),
+            events: Vec::new(),
         }
     }
 
@@ -61,22 +95,32 @@ impl TabsState {
         self.active + 1
     }
 
-    pub(crate) fn store_active(&mut self, current_dir: &Path) {
+    pub(crate) fn update_active_path(&mut self, current_dir: &Path) {
         if let Some(slot) = self.tabs.get_mut(self.active) {
+            if slot.path == current_dir {
+                return;
+            }
             slot.path = current_dir.to_path_buf();
+            self.events.push(TabsEvent::ActivePathChanged {
+                tab_id: slot.id,
+                path: slot.path.clone(),
+            });
         }
     }
 
     pub(crate) fn push_new(&mut self, current_dir: &Path) {
-        self.store_active(current_dir);
+        self.update_active_path(current_dir);
         let theme_id = self.rotation.next();
+        let tab_id = self.next_id;
+        let path = current_dir.to_path_buf();
         self.tabs.push(Tab {
-            id: self.next_id,
-            path: current_dir.to_path_buf(),
+            id: tab_id,
+            path: path.clone(),
             theme_id,
         });
         self.next_id = self.next_id.saturating_add(1);
         self.active = self.tabs.len().saturating_sub(1);
+        self.events.push(TabsEvent::TabAdded { tab_id, path });
     }
 
     pub(crate) fn next_index(&self) -> Option<usize> {
@@ -101,7 +145,7 @@ impl TabsState {
         if index >= self.tabs.len() {
             return None;
         }
-        self.store_active(current_dir);
+        self.update_active_path(current_dir);
         self.active = index;
         Some(self.tabs[index].path.clone())
     }
@@ -131,8 +175,29 @@ impl TabsState {
 
     pub(crate) fn set_active_theme(&mut self, theme_id: ColorThemeId) -> ColorPreference {
         let tab = self.tabs.get_mut(self.active).expect("active tab exists");
+        if tab.theme_id != theme_id {
+            self.events.push(TabsEvent::ActiveThemeChanged {
+                tab_id: tab.id,
+                theme_id,
+            });
+        }
         tab.set_theme(theme_id);
         tab.color_preference()
+    }
+
+    pub(crate) fn session_tabs(&self) -> Vec<SessionTab> {
+        self.tabs
+            .iter()
+            .map(|tab| SessionTab {
+                tab_id: tab.id,
+                path: tab.path.clone(),
+                theme_name: tab.theme_id.name().to_string(),
+            })
+            .collect()
+    }
+
+    pub(crate) fn take_events(&mut self) -> Vec<TabsEvent> {
+        std::mem::take(&mut self.events)
     }
 }
 
@@ -208,6 +273,7 @@ mod tests {
             active: 0,
             next_id: 3,
             rotation: ThemeRotation::new(ColorThemeId::GlacierCoast),
+            events: Vec::new(),
         };
 
         let next = tabs.switch_to(1, &dir_three);
@@ -237,6 +303,7 @@ mod tests {
             active: 1,
             next_id: 3,
             rotation: ThemeRotation::new(ColorThemeId::GlacierCoast),
+            events: Vec::new(),
         };
 
         let summaries = tabs.summaries();
