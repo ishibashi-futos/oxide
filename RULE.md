@@ -40,6 +40,7 @@
 
 - Keep `core` independent from `ratatui`. UI must only depend on Core, never the reverse.
 - Prefer small modules over growing `mod.rs`. `mod.rs` should mainly re-export submodules.
+- User notifications live in `core/user_notice` and are rendered by `ui/bottom_bar`.
 - Suggested Core modules:
   - `core/entries.rs` (listing/filtering/sorting)
   - `core/navigation.rs` (path move, parent/child)
