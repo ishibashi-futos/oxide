@@ -292,13 +292,16 @@ mod tests {
     fn save_session_emits_event_on_failure() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempdir().expect("tempdir");
-        let file_path = temp.path().join("config-file");
-        std::fs::write(&file_path, b"nope").expect("write");
+        let base = temp.path().to_path_buf();
+        let root = base.join("oxide");
+        std::fs::create_dir_all(&root).expect("create root");
+        let session_path = root.join("session.json");
+        std::fs::create_dir_all(&session_path).expect("create session dir");
 
         let prev_config = std::env::var_os("OX_CONFIG_HOME");
         let prev_allow = std::env::var_os("OX_TEST_ALLOW_CONFIG");
         unsafe {
-            std::env::set_var("OX_CONFIG_HOME", &file_path);
+            std::env::set_var("OX_CONFIG_HOME", &base);
             std::env::set_var("OX_TEST_ALLOW_CONFIG", "1");
         }
         let _ = poll_session_events();

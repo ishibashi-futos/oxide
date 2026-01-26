@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::config::Config;
+use crate::config::{Config, ConfigEvent, poll_config_events};
 use crate::core::{
     ColorTheme, ColorThemeId, Entry, SessionEvent, SessionTab, ShellCommandError,
     ShellCommandRequest, ShellEvent, ShellExecutionResult, ShellPermission, ShellWorker,
@@ -656,6 +656,19 @@ impl App {
                             "session: save failed".to_string(),
                             FeedbackStatus::Error,
                         ));
+                }
+            }
+        }
+    }
+
+    pub fn poll_config_events(&mut self) {
+        for event in poll_config_events() {
+            match event {
+                ConfigEvent::ConfigRootUnavailable => {
+                    self.slash_feedback = Some(self.timed_feedback(
+                        "config: not writable; set OX_CONFIG_HOME".to_string(),
+                        FeedbackStatus::Error,
+                    ));
                 }
             }
         }

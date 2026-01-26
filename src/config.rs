@@ -1,6 +1,13 @@
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock, mpsc};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::core::ColorThemeId;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigEvent {
+    ConfigRootUnavailable,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -116,12 +123,71 @@ pub fn config_root() -> Option<PathBuf> {
     let base = std::env::var_os("OX_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(base.join(Path::new("oxide")))
+    let root = base.join(Path::new("oxide"));
+    if std::fs::create_dir_all(&root).is_err() || !is_writable_dir(&root) {
+        notify_config_event(ConfigEvent::ConfigRootUnavailable);
+        return None;
+    }
+    Some(root)
+}
+
+pub fn poll_config_events() -> Vec<ConfigEvent> {
+    let bus = config_event_bus();
+    let receiver = bus.receiver.lock().expect("config event lock");
+    let mut events = Vec::new();
+    while let Ok(event) = receiver.try_recv() {
+        events.push(event);
+    }
+    events
+}
+
+struct ConfigEventBus {
+    sender: mpsc::Sender<ConfigEvent>,
+    receiver: Mutex<mpsc::Receiver<ConfigEvent>>,
+}
+
+fn config_event_bus() -> &'static ConfigEventBus {
+    static BUS: OnceLock<ConfigEventBus> = OnceLock::new();
+    BUS.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel();
+        ConfigEventBus {
+            sender,
+            receiver: Mutex::new(receiver),
+        }
+    })
+}
+
+fn notify_config_event(event: ConfigEvent) {
+    let _ = config_event_bus().sender.send(event);
+}
+
+fn is_writable_dir(path: &Path) -> bool {
+    let pid = std::process::id();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let probe = path.join(format!(".ox-write-test-{pid}-{nanos}"));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+    use tempfile::tempdir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parse_config_reads_default_theme() {
@@ -161,5 +227,72 @@ mod tests {
         let value = parse_string_value(" \"Night Harbor\" # comment").unwrap();
 
         assert_eq!(value, "Night Harbor");
+    }
+
+    #[test]
+    fn config_root_uses_ox_config_home() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let base = temp.path().to_path_buf();
+        let prev_config = std::env::var_os("OX_CONFIG_HOME");
+        let prev_allow = std::env::var_os("OX_TEST_ALLOW_CONFIG");
+
+        unsafe {
+            std::env::set_var("OX_CONFIG_HOME", &base);
+            std::env::set_var("OX_TEST_ALLOW_CONFIG", "1");
+        }
+
+        let root = config_root().expect("config root");
+
+        unsafe {
+            match prev_config {
+                Some(value) => std::env::set_var("OX_CONFIG_HOME", value),
+                None => std::env::remove_var("OX_CONFIG_HOME"),
+            }
+            match prev_allow {
+                Some(value) => std::env::set_var("OX_TEST_ALLOW_CONFIG", value),
+                None => std::env::remove_var("OX_TEST_ALLOW_CONFIG"),
+            }
+        }
+
+        assert_eq!(root, base.join("oxide"));
+    }
+
+    #[test]
+    fn config_root_emits_event_when_unwritable() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let file_path = temp.path().join("config-file");
+        std::fs::write(&file_path, b"nope").expect("write");
+
+        let prev_config = std::env::var_os("OX_CONFIG_HOME");
+        let prev_allow = std::env::var_os("OX_TEST_ALLOW_CONFIG");
+
+        unsafe {
+            std::env::set_var("OX_CONFIG_HOME", &file_path);
+            std::env::set_var("OX_TEST_ALLOW_CONFIG", "1");
+        }
+        let _ = poll_config_events();
+
+        let root = config_root();
+        let events = poll_config_events();
+
+        unsafe {
+            match prev_config {
+                Some(value) => std::env::set_var("OX_CONFIG_HOME", value),
+                None => std::env::remove_var("OX_CONFIG_HOME"),
+            }
+            match prev_allow {
+                Some(value) => std::env::set_var("OX_TEST_ALLOW_CONFIG", value),
+                None => std::env::remove_var("OX_TEST_ALLOW_CONFIG"),
+            }
+        }
+
+        assert!(root.is_none());
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, ConfigEvent::ConfigRootUnavailable))
+        );
     }
 }
