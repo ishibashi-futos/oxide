@@ -68,6 +68,7 @@ Goal: 「プロの道具」としての堅牢性を高めます。
 - [ ] `/shell {command}`: working directory 内で default shell でコマンド実行(PowerShell/Shell)
   - TODO: AllowedShell 機構は別途検討し、将来的に特定シェルを明示的に選べるようにする。
   - 既知事項: Windows の UNC パス (`\\server\share` / `\\?\UNC\server\share`) の比較が未対応。共有フォルダを使う環境では `PathEscapesWorkingDir` の誤検知が起きる可能性がある。
+- [ ] `search: ` UI と `/shell` などのスラッシュコマンドUIの統合
 - [ ] `/` から始まるコマンド
   - [ ] `/cwd /path/to`: Path IntelliSence 付きの、`cd` 機能
   - [ ] `/help`: ヘルプドキュメントの閲覧
@@ -90,4 +91,4 @@ Goal: 「プロの道具」としての堅牢性を高めます。
   - [x] base, primary(選択・フォーカス), secondary(補助), semantic(success/warn/error/info), grayscaleなどの状態と、タブの色調とは分けて整理する。タブの彩度は、メインのボーダーカラーとして使われるので、はっきり見えつつsemantic・primary/secondaryを邪魔しない色調にする = 低〜中彩度・中明度の「寒色寄りニュートラル」で、最低5つのテーマを用意し、タブにアサインできるようにする
   - [x] アサインするコマンドは `/color {theme name}` で、テーマ名のサジェストを入れる
 - [ ] デザインのブラッシュアップ、画面表示内容の再構成検討
-- [ ] ファイルナビゲーション内でのページアップ・ダウン、Home/End
+- [x] ファイルナビゲーション内でのページアップ・ダウン、Home/End
