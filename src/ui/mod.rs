@@ -17,7 +17,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{Frame, Terminal, backend::CrosstermBackend};
+use ratatui::{Frame, Terminal, backend::CrosstermBackend, layout::Rect};
 use std::time::Duration;
 
 use crate::{
@@ -41,7 +41,7 @@ use event::{
     slash_input_char,
 };
 use layout::{split_main, split_panes};
-use main_pane::{EntryListParams, render_entry_list};
+use main_pane::{EntryListParams, entry_list_view_height, render_entry_list};
 use metadata_worker::MetadataWorker;
 use preview_pane::{PreviewPaneState, render_preview_pane};
 use preview_worker::PreviewWorker;
@@ -208,6 +208,19 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             active_preview_id = None;
         }
 
+        let current_list_height = {
+            let size = guard.terminal_mut().size()?;
+            let area = Rect::new(0, 0, size.width, size.height);
+            let (_, main, _, _) = split_main(area, app.slash_input_active());
+            let preview_ratio = if app.preview_visible() || app.shell_output_active() {
+                Some(app.preview_ratio_percent())
+            } else {
+                None
+            };
+            let (_, right, _) = split_panes(main, preview_ratio);
+            entry_list_view_height(right, app.search_text())
+        };
+
         guard.terminal_mut().draw(|frame| {
             draw(
                 frame,
@@ -322,6 +335,18 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             }
             if is_cursor_down_event(key) {
                 app.move_cursor_down();
+            }
+            if is_page_up_event(key) {
+                app.move_cursor_page_up(current_list_height);
+            }
+            if is_page_down_event(key) {
+                app.move_cursor_page_down(current_list_height);
+            }
+            if is_home_event(key) {
+                app.move_cursor_home();
+            }
+            if is_end_event(key) {
+                app.move_cursor_end();
             }
             if is_enter_event(key) {
                 app.open_selected(opener)?;
