@@ -248,6 +248,39 @@ impl App {
         self.cursor = Some(cursor + 1);
     }
 
+    pub fn move_cursor_page_up(&mut self, step: usize) {
+        let Some(cursor) = self.cursor else { return };
+        if self.entries.is_empty() {
+            return;
+        }
+        let step = step.max(1);
+        self.cursor = Some(cursor.saturating_sub(step));
+    }
+
+    pub fn move_cursor_page_down(&mut self, step: usize) {
+        let Some(cursor) = self.cursor else { return };
+        if self.entries.is_empty() {
+            return;
+        }
+        let step = step.max(1);
+        let max = self.entries.len().saturating_sub(1);
+        self.cursor = Some((cursor + step).min(max));
+    }
+
+    pub fn move_cursor_home(&mut self) {
+        if self.entries.is_empty() {
+            return;
+        }
+        self.cursor = Some(0);
+    }
+
+    pub fn move_cursor_end(&mut self) {
+        if self.entries.is_empty() {
+            return;
+        }
+        self.cursor = Some(self.entries.len().saturating_sub(1));
+    }
+
     pub fn open_selected(&mut self, opener: &dyn EntryOpener) -> AppResult<()> {
         let Some(selected) = self.selected_entry() else {
             return Ok(());
@@ -2249,6 +2282,110 @@ mod tests {
         );
 
         app.move_cursor_down();
+
+        assert_eq!(app.cursor, Some(1));
+    }
+
+    #[test]
+    fn move_cursor_page_up_clamps_to_top() {
+        let mut app = App::new(
+            PathBuf::from("."),
+            vec![
+                Entry {
+                    name: "a.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "b.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "c.txt".to_string(),
+                    is_dir: false,
+                },
+            ],
+            Vec::new(),
+            Some(1),
+            false,
+        );
+
+        app.move_cursor_page_up(5);
+
+        assert_eq!(app.cursor, Some(0));
+    }
+
+    #[test]
+    fn move_cursor_page_down_clamps_to_bottom() {
+        let mut app = App::new(
+            PathBuf::from("."),
+            vec![
+                Entry {
+                    name: "a.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "b.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "c.txt".to_string(),
+                    is_dir: false,
+                },
+            ],
+            Vec::new(),
+            Some(1),
+            false,
+        );
+
+        app.move_cursor_page_down(10);
+
+        assert_eq!(app.cursor, Some(2));
+    }
+
+    #[test]
+    fn move_cursor_home_moves_to_first_entry() {
+        let mut app = App::new(
+            PathBuf::from("."),
+            vec![
+                Entry {
+                    name: "a.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "b.txt".to_string(),
+                    is_dir: false,
+                },
+            ],
+            Vec::new(),
+            Some(1),
+            false,
+        );
+
+        app.move_cursor_home();
+
+        assert_eq!(app.cursor, Some(0));
+    }
+
+    #[test]
+    fn move_cursor_end_moves_to_last_entry() {
+        let mut app = App::new(
+            PathBuf::from("."),
+            vec![
+                Entry {
+                    name: "a.txt".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "b.txt".to_string(),
+                    is_dir: false,
+                },
+            ],
+            Vec::new(),
+            Some(0),
+            false,
+        );
+
+        app.move_cursor_end();
 
         assert_eq!(app.cursor, Some(1));
     }

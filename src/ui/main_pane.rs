@@ -17,6 +17,15 @@ pub struct EntryListParams<'a> {
     pub active: bool,
 }
 
+pub fn entry_list_view_height(area: Rect, search_text: &str) -> usize {
+    let inner_height = area.height.saturating_sub(2);
+    if search_text.is_empty() {
+        inner_height as usize
+    } else {
+        inner_height.saturating_sub(1) as usize
+    }
+}
+
 pub fn render_entry_list(frame: &mut Frame<'_>, area: Rect, params: &EntryListParams<'_>) {
     let matches = search_matches(params.entries, params.search_text);
     let items: Vec<ListItem> = params
@@ -183,6 +192,17 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::{Terminal, layout::Rect};
+
+    #[test]
+    fn entry_list_view_height_accounts_for_border_and_footer() {
+        let area = Rect::new(0, 0, 10, 6);
+
+        let empty_search = entry_list_view_height(area, "");
+        let active_search = entry_list_view_height(area, "a");
+
+        assert_eq!(empty_search, 4);
+        assert_eq!(active_search, 3);
+    }
 
     #[test]
     fn render_directory_list_shows_entries() {
