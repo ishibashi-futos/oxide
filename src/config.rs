@@ -120,9 +120,6 @@ pub fn config_root() -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-pub static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-#[cfg(test)]
 mod tests {
     use super::*;
 

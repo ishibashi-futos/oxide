@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 
 use crate::config::Config;
 use crate::core::{
-    ColorTheme, ColorThemeId, Entry, ShellCommandError, ShellCommandRequest, ShellEvent,
-    ShellExecutionResult, ShellPermission, ShellWorker, SlashCommand, SlashCommandError,
-    list_entries, load_session_tabs, parse_slash_command, save_session_async,
+    ColorTheme, ColorThemeId, Entry, SessionTab, ShellCommandError, ShellCommandRequest,
+    ShellEvent, ShellExecutionResult, ShellPermission, ShellWorker, SlashCommand,
+    SlashCommandError, list_entries, load_session_tabs, parse_slash_command, save_session_async,
 };
 use crate::error::{AppError, AppResult};
 use crate::tabs::{TabSummary, TabsEvent, TabsState};
@@ -26,6 +26,34 @@ struct SystemClock;
 impl AppClock for SystemClock {
     fn now(&self) -> Instant {
         Instant::now()
+    }
+}
+
+#[allow(dead_code)]
+trait ConfigLoader {
+    fn load(&self) -> Config;
+}
+
+#[allow(dead_code)]
+struct DefaultConfigLoader;
+
+impl ConfigLoader for DefaultConfigLoader {
+    fn load(&self) -> Config {
+        Config::load()
+    }
+}
+
+#[allow(dead_code)]
+trait SessionLoader {
+    fn load_tabs(&self) -> Vec<SessionTab>;
+}
+
+#[allow(dead_code)]
+struct DefaultSessionLoader;
+
+impl SessionLoader for DefaultSessionLoader {
+    fn load_tabs(&self) -> Vec<SessionTab> {
+        load_session_tabs()
     }
 }
 
@@ -160,9 +188,20 @@ impl App {
     }
 
     pub fn load(current_dir: PathBuf) -> AppResult<Self> {
+        let config_loader = DefaultConfigLoader;
+        let session_loader = DefaultSessionLoader;
+        Self::load_with(current_dir, &config_loader, &session_loader)
+    }
+
+    fn load_with(
+        current_dir: PathBuf,
+        config_loader: &dyn ConfigLoader,
+        session_loader: &dyn SessionLoader,
+    ) -> AppResult<Self> {
         let show_hidden = false;
-        let config = Config::load();
-        let session_tabs = load_session_tabs()
+        let config = config_loader.load();
+        let session_tabs = session_loader
+            .load_tabs()
             .into_iter()
             .filter(|tab| tab.path.is_dir())
             .collect::<Vec<_>>();
@@ -1390,7 +1429,6 @@ fn compact_output(output: &str, max_len: usize) -> Option<String> {
 #[cfg(test)]
 mod slash_tests {
     use super::*;
-    use crate::config::ENV_LOCK;
     use crate::tabs::TabSummary;
 
     #[derive(Debug)]
@@ -1408,30 +1446,48 @@ mod slash_tests {
         App::new(PathBuf::from("."), Vec::new(), Vec::new(), None, false)
     }
 
-    fn app_with_two_tabs() -> (tempfile::TempDir, App, PathBuf, PathBuf) {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        let previous_allow = std::env::var_os("OX_TEST_ALLOW_CONFIG");
-        unsafe {
-            std::env::remove_var("OX_TEST_ALLOW_CONFIG");
+    #[derive(Clone)]
+    struct FixedConfigLoader {
+        config: Config,
+    }
+
+    impl ConfigLoader for FixedConfigLoader {
+        fn load(&self) -> Config {
+            self.config.clone()
         }
+    }
+
+    #[derive(Clone)]
+    struct FixedSessionLoader {
+        tabs: Vec<SessionTab>,
+    }
+
+    impl SessionLoader for FixedSessionLoader {
+        fn load_tabs(&self) -> Vec<SessionTab> {
+            self.tabs.clone()
+        }
+    }
+
+    fn load_app_with(current_dir: PathBuf, config: Config, tabs: Vec<SessionTab>) -> App {
+        let config_loader = FixedConfigLoader { config };
+        let session_loader = FixedSessionLoader { tabs };
+        App::load_with(current_dir, &config_loader, &session_loader).unwrap()
+    }
+
+    fn load_app(current_dir: PathBuf) -> App {
+        load_app_with(current_dir, Config::default(), Vec::new())
+    }
+
+    fn app_with_two_tabs() -> (tempfile::TempDir, App, PathBuf, PathBuf) {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir_one = temp_dir.path().join("one");
         let dir_two = temp_dir.path().join("two");
         std::fs::create_dir(&dir_one).unwrap();
         std::fs::create_dir(&dir_two).unwrap();
 
-        let mut app = App::load(dir_one.clone()).unwrap();
+        let mut app = load_app(dir_one.clone());
         app.new_tab().unwrap();
         app.change_dir(dir_two.clone());
-
-        match previous_allow {
-            Some(value) => unsafe {
-                std::env::set_var("OX_TEST_ALLOW_CONFIG", value);
-            },
-            None => unsafe {
-                std::env::remove_var("OX_TEST_ALLOW_CONFIG");
-            },
-        }
 
         (temp_dir, app, dir_one, dir_two)
     }
@@ -1633,7 +1689,7 @@ mod slash_tests {
         std::fs::create_dir(temp_dir.path().join("dir")).unwrap();
         std::fs::write(temp_dir.path().join("diary.txt"), "note").unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.slash_input_active = true;
         app.slash_input_buffer = "/shell ./build.sh ./di".to_string();
 
@@ -1653,7 +1709,7 @@ mod slash_tests {
         std::fs::create_dir(temp_dir.path().join("dir")).unwrap();
         std::fs::write(temp_dir.path().join("diary.txt"), "note").unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.slash_input_active = true;
         app.slash_input_buffer = "/shell ./build.sh ./di".to_string();
 
@@ -1667,7 +1723,7 @@ mod slash_tests {
         let temp_dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(temp_dir.path().join("src")).unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.slash_input_active = true;
         app.slash_input_buffer = "/shell ./sr".to_string();
 
@@ -1689,7 +1745,7 @@ mod slash_tests {
             timestamp_ms: 1,
         };
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.shell_output_view.reset(&request, &result);
         let before = app.shell_output_view.lines.clone();
         app.slash_input_active = true;
@@ -1702,54 +1758,25 @@ mod slash_tests {
 
     #[test]
     fn load_restores_multiple_tabs_from_session() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        let previous = std::env::var_os("OX_CONFIG_HOME");
-        let previous_allow = std::env::var_os("OX_TEST_ALLOW_CONFIG");
         let temp_dir = tempfile::tempdir().unwrap();
-        unsafe {
-            std::env::set_var("OX_CONFIG_HOME", temp_dir.path());
-            std::env::set_var("OX_TEST_ALLOW_CONFIG", "1");
-        }
-
-        let config_root = temp_dir.path().join("oxide");
-        std::fs::create_dir_all(&config_root).unwrap();
         let dir_one = temp_dir.path().join("one");
         let dir_two = temp_dir.path().join("two");
         std::fs::create_dir(&dir_one).unwrap();
         std::fs::create_dir(&dir_two).unwrap();
 
-        let session = serde_json::json!({
-            "version": 1,
-            "session_id": "test",
-            "tabs": [
-                { "tab_id": 4, "path": dir_one, "theme": "Night Harbor" },
-                { "tab_id": 8, "path": dir_two, "theme": "Glacier Coast" }
-            ]
-        });
-        std::fs::write(
-            config_root.join("session.json"),
-            serde_json::to_string(&session).unwrap(),
-        )
-        .unwrap();
-
-        let app = App::load(PathBuf::from("/fallback")).unwrap();
-
-        match previous {
-            Some(value) => unsafe {
-                std::env::set_var("OX_CONFIG_HOME", value);
+        let session_tabs = vec![
+            SessionTab {
+                tab_id: 4,
+                path: dir_one.clone(),
+                theme_name: "Night Harbor".to_string(),
             },
-            None => unsafe {
-                std::env::remove_var("OX_CONFIG_HOME");
+            SessionTab {
+                tab_id: 8,
+                path: dir_two.clone(),
+                theme_name: "Glacier Coast".to_string(),
             },
-        }
-        match previous_allow {
-            Some(value) => unsafe {
-                std::env::set_var("OX_TEST_ALLOW_CONFIG", value);
-            },
-            None => unsafe {
-                std::env::remove_var("OX_TEST_ALLOW_CONFIG");
-            },
-        }
+        ];
+        let app = load_app_with(PathBuf::from("/fallback"), Config::default(), session_tabs);
 
         assert_eq!(app.current_dir, dir_one);
         assert_eq!(app.tabs.count(), 2);
@@ -2070,6 +2097,38 @@ fn clamp_cursor(entries: &[Entry], index: usize) -> Option<usize> {
 mod tests {
     use super::*;
 
+    #[derive(Clone)]
+    struct FixedConfigLoader {
+        config: Config,
+    }
+
+    impl ConfigLoader for FixedConfigLoader {
+        fn load(&self) -> Config {
+            self.config.clone()
+        }
+    }
+
+    #[derive(Clone)]
+    struct FixedSessionLoader {
+        tabs: Vec<SessionTab>,
+    }
+
+    impl SessionLoader for FixedSessionLoader {
+        fn load_tabs(&self) -> Vec<SessionTab> {
+            self.tabs.clone()
+        }
+    }
+
+    fn load_app_with(current_dir: PathBuf, config: Config, tabs: Vec<SessionTab>) -> App {
+        let config_loader = FixedConfigLoader { config };
+        let session_loader = FixedSessionLoader { tabs };
+        App::load_with(current_dir, &config_loader, &session_loader).unwrap()
+    }
+
+    fn load_app(current_dir: PathBuf) -> App {
+        load_app_with(current_dir, Config::default(), Vec::new())
+    }
+
     #[test]
     fn move_cursor_up_stops_at_top() {
         let mut app = App::new(
@@ -2289,7 +2348,7 @@ mod tests {
         let child_dir = temp_dir.path().join("child");
         std::fs::create_dir(&child_dir).unwrap();
 
-        let mut app = App::load(child_dir).unwrap();
+        let mut app = load_app(child_dir);
 
         app.move_to_parent().unwrap();
 
@@ -2306,7 +2365,7 @@ mod tests {
         std::fs::create_dir(&other).unwrap();
         std::fs::create_dir(&target).unwrap();
 
-        let mut app = App::load(target.clone()).unwrap();
+        let mut app = load_app(target.clone());
 
         app.move_to_parent().unwrap();
 
@@ -2323,7 +2382,7 @@ mod tests {
         let hidden = temp_dir.path().join(".secret");
         std::fs::write(&hidden, "hidden").unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         assert!(app.entries.is_empty());
 
         app.toggle_hidden().unwrap();
@@ -2344,7 +2403,7 @@ mod tests {
         std::fs::write(temp_dir.path().join("a.txt"), "a").unwrap();
         std::fs::write(temp_dir.path().join("b.txt"), "b").unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.cursor = Some(1);
 
         app.toggle_hidden().unwrap();
@@ -2362,7 +2421,7 @@ mod tests {
         std::fs::write(temp_dir.path().join("a.txt"), "a").unwrap();
         std::fs::write(temp_dir.path().join("b.txt"), "b").unwrap();
 
-        let mut app = App::load(temp_dir.path().to_path_buf()).unwrap();
+        let mut app = load_app(temp_dir.path().to_path_buf());
         app.toggle_hidden().unwrap();
         app.cursor = Some(0);
 
@@ -2483,7 +2542,7 @@ mod tests {
         std::fs::create_dir(&dir_one).unwrap();
         std::fs::create_dir(&dir_two).unwrap();
 
-        let mut app = App::load(dir_one.clone()).unwrap();
+        let mut app = load_app(dir_one.clone());
         app.new_tab().unwrap();
 
         app.change_dir(dir_two.clone());
