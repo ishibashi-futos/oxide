@@ -2,7 +2,7 @@ use chrono::{DateTime, Local};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -46,6 +46,20 @@ pub fn render_slash_bar(
 ) {
     let bar = Paragraph::new(build_slash_bar(input, candidates, hint, area.width))
         .style(slash_bar_style(theme));
+    frame.render_widget(bar, area);
+}
+
+pub fn render_search_bar(frame: &mut Frame<'_>, area: Rect, input: &str, theme: &ColorTheme) {
+    let suffix_style = Style::default()
+        .fg(to_color(theme.grayscale.high))
+        .add_modifier(Modifier::DIM);
+    let bar = Paragraph::new(build_search_bar_line(
+        input,
+        " - incremental search",
+        suffix_style,
+        area.width,
+    ))
+    .style(slash_bar_style(theme));
     frame.render_widget(bar, area);
 }
 
@@ -147,6 +161,51 @@ fn build_slash_bar(
         used += 1;
     }
     result
+}
+
+fn build_search_bar_line(
+    input: &str,
+    suffix: &str,
+    suffix_style: Style,
+    width: u16,
+) -> Line<'static> {
+    let width = width as usize;
+    if width == 0 {
+        return Line::default();
+    }
+    let mut used = 0usize;
+    let mut spans = Vec::new();
+
+    let mut input_text = String::new();
+    for ch in input.chars() {
+        if used >= width {
+            break;
+        }
+        input_text.push(ch);
+        used += 1;
+    }
+    if !input_text.is_empty() {
+        spans.push(Span::raw(input_text));
+    }
+
+    if used < width {
+        let mut suffix_text = String::new();
+        for ch in suffix.chars() {
+            if used >= width {
+                break;
+            }
+            suffix_text.push(ch);
+            used += 1;
+        }
+        if !suffix_text.is_empty() {
+            spans.push(Span::styled(suffix_text, suffix_style));
+        }
+    }
+
+    if used < width {
+        spans.push(Span::raw(" ".repeat(width - used)));
+    }
+    Line::from(spans)
 }
 
 fn line_with_right_spans(
@@ -517,6 +576,40 @@ mod tests {
 
         assert!(line.contains("toggle preview"));
         assert!(line.contains("options: show, hide"));
+    }
+
+    #[test]
+    fn render_search_bar_shows_input_and_suffix() {
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 40, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
+        terminal
+            .draw(|frame| render_search_bar(frame, area, "alpha", &theme))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = buffer_line(buffer, 0, 40);
+
+        assert!(line.contains("alpha"));
+        assert!(line.contains("incremental search"));
+    }
+
+    #[test]
+    fn render_search_bar_uses_dim_style_for_suffix() {
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 40, 1);
+        let theme = ColorThemeId::GlacierCoast.theme();
+        terminal
+            .draw(|frame| render_search_bar(frame, area, "alpha", &theme))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let style = find_cell_style(buffer, "incremental").expect("style not found");
+
+        assert!(style.add_modifier.contains(Modifier::DIM));
+        assert_eq!(style.fg, Some(to_color(theme.grayscale.high)));
     }
 
     #[test]

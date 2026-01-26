@@ -2,7 +2,7 @@ use ratatui::{
     Frame,
     layout::Rect,
     style::{Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState},
 };
 
 use crate::core::{ColorTheme, Entry};
@@ -17,13 +17,9 @@ pub struct EntryListParams<'a> {
     pub active: bool,
 }
 
-pub fn entry_list_view_height(area: Rect, search_text: &str) -> usize {
+pub fn entry_list_view_height(area: Rect) -> usize {
     let inner_height = area.height.saturating_sub(2);
-    if search_text.is_empty() {
-        inner_height as usize
-    } else {
-        inner_height.saturating_sub(1) as usize
-    }
+    inner_height as usize
 }
 
 pub fn render_entry_list(frame: &mut Frame<'_>, area: Rect, params: &EntryListParams<'_>) {
@@ -60,8 +56,7 @@ pub fn render_entry_list(frame: &mut Frame<'_>, area: Rect, params: &EntryListPa
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (list_area, footer_area) = split_list_and_footer(inner, !params.search_text.is_empty());
-    if list_area.height > 0 {
+    if inner.height > 0 {
         let list = List::new(items)
             .highlight_style(highlight_style(
                 !params.search_text.is_empty(),
@@ -71,13 +66,7 @@ pub fn render_entry_list(frame: &mut Frame<'_>, area: Rect, params: &EntryListPa
             .style(text_style);
         let mut state = ListState::default();
         state.select(params.cursor);
-        frame.render_stateful_widget(list, list_area, &mut state);
-    }
-
-    if let Some(footer_area) = footer_area {
-        let footer = build_search_footer(footer_area.width, params.search_text);
-        let footer_widget = Paragraph::new(footer).style(search_footer_style());
-        frame.render_widget(footer_widget, footer_area);
+        frame.render_stateful_widget(list, inner, &mut state);
     }
 
     // ListState is handled above to keep footer aligned inside the border.
@@ -112,62 +101,6 @@ fn highlight_symbol(search_text: &str) -> &'static str {
     if search_text.is_empty() { "> " } else { "? " }
 }
 
-fn split_list_and_footer(area: Rect, show_footer: bool) -> (Rect, Option<Rect>) {
-    if !show_footer || area.height == 0 {
-        return (area, None);
-    }
-    let list_height = area.height.saturating_sub(1);
-    let list_area = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: list_height,
-    };
-    let footer_area = Rect {
-        x: area.x,
-        y: area.y + list_height,
-        width: area.width,
-        height: 1,
-    };
-    (list_area, Some(footer_area))
-}
-
-fn build_search_footer(width: u16, search_text: &str) -> String {
-    let width = width as usize;
-    if width == 0 {
-        return String::new();
-    }
-    let prefix = "search: ";
-    let mut result = String::new();
-    let mut used = 0usize;
-    for ch in prefix.chars() {
-        if used >= width {
-            return result;
-        }
-        result.push(ch);
-        used += 1;
-    }
-
-    for ch in search_text.chars() {
-        if used >= width {
-            return result;
-        }
-        result.push(ch);
-        used += 1;
-    }
-
-    while used < width {
-        result.push(' ');
-        used += 1;
-    }
-
-    result
-}
-
-fn search_footer_style() -> Style {
-    Style::default().add_modifier(Modifier::UNDERLINED)
-}
-
 fn search_matches(entries: &[Entry], search_text: &str) -> Vec<usize> {
     if search_text.is_empty() {
         return Vec::new();
@@ -194,14 +127,12 @@ mod tests {
     use ratatui::{Terminal, layout::Rect};
 
     #[test]
-    fn entry_list_view_height_accounts_for_border_and_footer() {
+    fn entry_list_view_height_accounts_for_border() {
         let area = Rect::new(0, 0, 10, 6);
 
-        let empty_search = entry_list_view_height(area, "");
-        let active_search = entry_list_view_height(area, "a");
+        let height = entry_list_view_height(area);
 
-        assert_eq!(empty_search, 4);
-        assert_eq!(active_search, 3);
+        assert_eq!(height, 4);
     }
 
     #[test]
@@ -328,13 +259,6 @@ mod tests {
     }
 
     #[test]
-    fn build_search_footer_fills_remaining_width() {
-        let footer = build_search_footer(20, "alpha");
-        assert_eq!(footer.chars().count(), 20);
-        assert!(footer.contains("search: alpha"));
-    }
-
-    #[test]
     fn secondary_match_style_applies_to_non_selected_hits() {
         let backend = TestBackend::new(24, 6);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -377,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn render_search_footer_in_current_panel() {
+    fn render_search_footer_is_removed() {
         let backend = TestBackend::new(24, 6);
         let mut terminal = Terminal::new(backend).unwrap();
         let entries = vec![Entry {
@@ -403,37 +327,7 @@ mod tests {
 
         let buffer = terminal.backend().buffer();
         let content = buffer_text(buffer, 24, 6);
-        assert!(content.contains("search: al"));
-    }
-
-    #[test]
-    fn search_footer_is_underlined() {
-        let backend = TestBackend::new(24, 6);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let entries = vec![Entry {
-            name: "alpha.txt".to_string(),
-            is_dir: false,
-        }];
-
-        let area = Rect::new(0, 0, 24, 6);
-        let theme = ColorThemeId::GlacierCoast.theme();
-        terminal
-            .draw(|frame| {
-                let params = EntryListParams {
-                    entries: &entries,
-                    cursor: Some(0),
-                    title: "current",
-                    search_text: "al",
-                    theme: &theme,
-                    active: true,
-                };
-                render_entry_list(frame, area, &params)
-            })
-            .unwrap();
-
-        let buffer = terminal.backend().buffer();
-        let style = find_cell_style(buffer, "search: al").expect("style not found");
-        assert!(style.add_modifier.contains(Modifier::UNDERLINED));
+        assert!(!content.contains("search: al"));
     }
 
     fn buffer_text(buffer: &Buffer, width: u16, height: u16) -> String {

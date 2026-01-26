@@ -30,7 +30,7 @@ use crate::core::{
     MetadataWindow, PreviewEvent, PreviewFailed, PreviewReady, PreviewRequest, RequestId,
     RequestTracker,
 };
-use bottom_bar::{format_metadata, render_bottom_bar, render_slash_bar};
+use bottom_bar::{format_metadata, render_bottom_bar, render_search_bar, render_slash_bar};
 use event::{
     is_cursor_down_event, is_cursor_left_event, is_cursor_right_event, is_cursor_up_event,
     is_end_event, is_enter_dir_event, is_enter_event, is_home_event, is_new_tab_event,
@@ -211,14 +211,15 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
         let current_list_height = {
             let size = guard.terminal_mut().size()?;
             let area = Rect::new(0, 0, size.width, size.height);
-            let (_, main, _, _) = split_main(area, app.slash_input_active());
+            let show_command_bar = app.slash_input_active() || !app.search_text().is_empty();
+            let (_, main, _, _) = split_main(area, show_command_bar);
             let preview_ratio = if app.preview_visible() || app.shell_output_active() {
                 Some(app.preview_ratio_percent())
             } else {
                 None
             };
             let (_, right, _) = split_panes(main, preview_ratio);
-            entry_list_view_height(right, app.search_text())
+            entry_list_view_height(right)
         };
 
         guard.terminal_mut().draw(|frame| {
@@ -385,7 +386,8 @@ fn draw(
     theme: &crate::core::ColorTheme,
 ) {
     let area = frame.area();
-    let (top, main, bottom, slash) = split_main(area, app.slash_input_active());
+    let show_command_bar = app.slash_input_active() || !app.search_text().is_empty();
+    let (top, main, bottom, slash) = split_main(area, show_command_bar);
     render_top_bar(frame, top, app);
     let preview_ratio = if app.preview_visible() || app.shell_output_active() {
         Some(app.preview_ratio_percent())
@@ -447,16 +449,20 @@ fn draw(
         theme,
     );
     if let Some(slash_area) = slash {
-        let candidates = app.slash_candidates();
-        let hint = app.slash_hint();
-        render_slash_bar(
-            frame,
-            slash_area,
-            app.slash_input_text(),
-            &candidates,
-            hint.as_deref(),
-            theme,
-        );
+        if app.slash_input_active() {
+            let candidates = app.slash_candidates();
+            let hint = app.slash_hint();
+            render_slash_bar(
+                frame,
+                slash_area,
+                app.slash_input_text(),
+                &candidates,
+                hint.as_deref(),
+                theme,
+            );
+        } else if !app.search_text().is_empty() {
+            render_search_bar(frame, slash_area, app.search_text(), theme);
+        }
     }
 }
 
