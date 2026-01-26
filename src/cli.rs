@@ -135,7 +135,7 @@ pub struct SelfUpdatePlanSummary {
     pub line: String,
     pub decision: UpdateDecision,
     pub asset: Option<GitHubAsset>,
-    pub target_tag: String,
+    pub current_tag: String,
 }
 
 pub fn self_update_latest_plan(
@@ -192,7 +192,7 @@ fn build_plan_summary(plan: SelfUpdatePlan) -> SelfUpdatePlanSummary {
         line,
         decision: plan.decision,
         asset,
-        target_tag: plan.target_tag().to_string(),
+        current_tag: plan.current_tag().to_string(),
     }
 }
 
@@ -210,6 +210,8 @@ pub fn self_update_tag_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::self_update::release::{GitHubRelease, ReleaseTarget};
+    use semver::Version;
 
     #[test]
     fn parse_args_defaults_to_tui() {
@@ -427,6 +429,29 @@ mod tests {
                 insecure: true,
             }
         );
+    }
+
+    #[test]
+    fn build_plan_summary_carries_current_tag() {
+        let plan = SelfUpdatePlan {
+            decision: UpdateDecision::UpdateAvailable,
+            release: GitHubRelease {
+                tag_name: "v0.4.2".to_string(),
+                prerelease: false,
+                draft: false,
+                assets: Vec::new(),
+            },
+            target: ReleaseTarget {
+                tag: "v0.4.2".to_string(),
+                version: Version::parse("0.4.2").expect("version"),
+            },
+            current: Version::parse("0.3.0").expect("version"),
+            current_tag: "v0.3.0".to_string(),
+        };
+
+        let summary = build_plan_summary(plan);
+
+        assert_eq!(summary.current_tag, "v0.3.0");
     }
 
     #[derive(Debug)]

@@ -4,9 +4,8 @@ use crate::self_update::{
     error::SelfUpdateError,
     http::HttpClient,
     release::{
-        GitHubAsset, GitHubRelease, ReleaseTarget, UpdateDecision, current_version, decide_update,
-        fetch_releases, latest_release_info, parse_version_tag, select_release_by_tag,
-        select_target_asset,
+        GitHubAsset, GitHubRelease, ReleaseTarget, UpdateDecision, decide_update, fetch_releases,
+        latest_release_info, parse_version_tag, select_release_by_tag, select_target_asset,
     },
     replace,
     traits::VersionEnv,
@@ -20,11 +19,16 @@ pub struct SelfUpdatePlan {
     pub release: GitHubRelease,
     pub target: ReleaseTarget,
     pub current: Version,
+    pub current_tag: String,
 }
 
 impl SelfUpdatePlan {
     pub fn target_tag(&self) -> &str {
         &self.target.tag
+    }
+
+    pub fn current_tag(&self) -> &str {
+        &self.current_tag
     }
 
     pub fn asset_for_target(&self, target: &str) -> Option<&GitHubAsset> {
@@ -40,7 +44,8 @@ impl SelfUpdateService {
         env: &dyn VersionEnv,
         cargo_version: &str,
     ) -> Result<SelfUpdatePlan, SelfUpdateError> {
-        let current = current_version(env, cargo_version)?;
+        let current_tag = crate::self_update::release::current_version_tag(env, cargo_version);
+        let current = parse_version_tag(&current_tag)?;
         let client = HttpClient::new(config.allow_insecure)?;
         let (release, target) =
             latest_release_info(client.agent(), &config.repo, config.allow_prerelease)?;
@@ -50,6 +55,7 @@ impl SelfUpdateService {
             release,
             target,
             current,
+            current_tag,
         })
     }
 
@@ -59,7 +65,8 @@ impl SelfUpdateService {
         cargo_version: &str,
         tag: &str,
     ) -> Result<SelfUpdatePlan, SelfUpdateError> {
-        let current = current_version(env, cargo_version)?;
+        let current_tag = crate::self_update::release::current_version_tag(env, cargo_version);
+        let current = parse_version_tag(&current_tag)?;
         let client = HttpClient::new(config.allow_insecure)?;
         let releases = fetch_releases(client.agent(), &config.repo)?;
         let release = select_release_by_tag(&releases, tag)
@@ -78,6 +85,7 @@ impl SelfUpdateService {
             release,
             target,
             current,
+            current_tag,
         })
     }
 

@@ -45,14 +45,6 @@ pub fn current_version_tag(env: &dyn VersionEnv, cargo_version: &str) -> String 
         .unwrap_or_else(|| cargo_version.to_string())
 }
 
-pub fn current_version(
-    env: &dyn VersionEnv,
-    cargo_version: &str,
-) -> Result<Version, semver::Error> {
-    let tag = current_version_tag(env, cargo_version);
-    parse_version_tag(&tag)
-}
-
 pub fn decide_update(current: &Version, target: &Version) -> UpdateDecision {
     if target > current {
         UpdateDecision::UpdateAvailable

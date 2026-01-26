@@ -95,7 +95,7 @@ fn main() -> AppResult<()> {
                     }
                     match SelfUpdateService::download_asset(asset, &config) {
                         Ok(path) => {
-                            match SelfUpdateService::replace_current(&path, &plan.target_tag) {
+                            match SelfUpdateService::replace_current(&path, &plan.current_tag) {
                                 Ok(backup) => {
                                     println!("self-update: updated (backup: {})", backup.display());
                                 }
