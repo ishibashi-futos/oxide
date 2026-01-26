@@ -10,7 +10,7 @@ mod ui;
 
 use crate::cli::{
     Command, parse_args, parse_self_update_args, render_error, self_update_intro,
-    self_update_latest_plan, self_update_tag_plan, usage,
+    self_update_latest_plan, self_update_tag_plan, usage, version_line,
 };
 use crate::self_update::{SelfUpdateConfig, SelfUpdateService, SystemVersionEnv, UpdateDecision};
 use crate::{app::App, error::AppResult, opener::PlatformOpener};
@@ -32,7 +32,8 @@ fn main() -> AppResult<()> {
             ui::run(app, &opener)
         }
         Command::Version => {
-            println!("ox {}", env!("CARGO_PKG_VERSION"));
+            let env = SystemVersionEnv;
+            println!("{}", version_line(&env, env!("CARGO_PKG_VERSION")));
             Ok(())
         }
         Command::SelfUpdate { args } => {

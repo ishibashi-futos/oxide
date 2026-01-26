@@ -371,6 +371,7 @@ fn ensure_args_within_working_dir(
     })
 }
 
+#[cfg(any(test, not(windows)))]
 fn comparable_path(path: &Path) -> PathBuf {
     let normalized = normalize_path(path);
     #[cfg(windows)]

@@ -96,7 +96,7 @@ UI は `UserNotice` を受け取り、Bottom Bar に表示する。
 
 - [x] `UserNotice` の共通イベント実装。
 - [x] `SlashFeedback` から `UserNotice` への統合。
-- [ ] セッション保存の失敗通知実装。
+- [x] セッション保存の失敗通知実装。
 
 ### 公開仕様
 
