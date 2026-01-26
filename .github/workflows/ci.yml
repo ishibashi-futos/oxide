@@ -76,6 +76,18 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Build (release)
         run: cargo build --release --target ${{ matrix.target }}
+      - name: Show version (unix)
+        if: runner.os != 'Windows'
+        env:
+          OX_BUILD_VERSION: ${{ github.ref_name }}
+        run: ${{ matrix.bin_path }} --version
+      - name: Show version (windows)
+        if: runner.os == 'Windows'
+        env:
+          OX_BUILD_VERSION: ${{ github.ref_name }}
+        shell: pwsh
+        run: |
+          & "${{ matrix.bin_path }}" --version
       - name: Package artifact (unix)
         if: runner.os != 'Windows'
         run: |

@@ -69,6 +69,11 @@ pub fn self_update_intro(env: &dyn VersionEnv, cargo_version: &str) -> String {
     format!("self-update: current version {tag}")
 }
 
+pub fn version_line(env: &dyn VersionEnv, cargo_version: &str) -> String {
+    let tag = current_version_tag(env, cargo_version);
+    format!("ox {tag}")
+}
+
 pub fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateArgs, CliError> {
     let mut tag = None;
     let mut prerelease = false;
@@ -279,6 +284,24 @@ mod tests {
         let message = self_update_intro(&env, "0.1.0");
 
         assert_eq!(message, "self-update: current version 0.1.0");
+    }
+
+    #[test]
+    fn version_line_uses_build_version() {
+        let env = FakeEnv::new("v9.9.9");
+
+        let message = version_line(&env, "0.1.0");
+
+        assert_eq!(message, "ox v9.9.9");
+    }
+
+    #[test]
+    fn version_line_falls_back_to_cargo_version() {
+        let env = FakeEnv::empty();
+
+        let message = version_line(&env, "0.1.0");
+
+        assert_eq!(message, "ox 0.1.0");
     }
 
     #[test]
