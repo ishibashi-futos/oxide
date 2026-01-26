@@ -6,13 +6,10 @@ use crate::config::config_root;
 use uuid::Uuid;
 
 pub fn load_session_tabs() -> Vec<SessionTab> {
-    if cfg!(test) && std::env::var_os("OX_TEST_ALLOW_CONFIG").is_none() {
-        return Vec::new();
-    }
-    let Some(path) = session_path() else {
+    let Some(root) = config_root() else {
         return Vec::new();
     };
-    load_session_tabs_from(&path)
+    SessionStore::new(root).load_tabs()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,32 +24,58 @@ pub struct SessionTab {
     pub theme_name: String,
 }
 
-pub fn save_session_async(tabs: Vec<SessionTab>) {
-    let Some(path) = session_path() else {
-        return;
-    };
-    let session_id = generate_session_id();
-    let payload = build_session_payload(&tabs, &session_id);
-    let history_path = session_history_path(&session_id);
-    thread::spawn(move || {
-        let mut notified = false;
-        if write_session_atomic(&path, payload.as_bytes()).is_err() && !notified {
-            notify_session_event(SessionEvent::SaveFailed);
-            notified = true;
-        }
-        if let Some(path) = history_path {
-            if write_session_atomic(&path, payload.as_bytes()).is_err() {
+#[derive(Debug, Clone)]
+pub struct SessionStore {
+    root: PathBuf,
+}
+
+impl SessionStore {
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    pub fn load_tabs(&self) -> Vec<SessionTab> {
+        load_session_tabs_from(&self.session_path())
+    }
+
+    pub fn save_async(&self, tabs: Vec<SessionTab>) {
+        let path = self.session_path();
+        let session_id = generate_session_id();
+        let payload = build_session_payload(&tabs, &session_id);
+        let history_path = self.session_history_path(&session_id);
+        thread::spawn(move || {
+            let mut notified = false;
+            if write_session_atomic(&path, payload.as_bytes()).is_err() && !notified {
+                notify_session_event(SessionEvent::SaveFailed);
+                notified = true;
+            }
+            if write_session_atomic(&history_path, payload.as_bytes()).is_err() {
                 if !notified {
                     notify_session_event(SessionEvent::SaveFailed);
                 }
-            } else if let Some(dir) = path.parent()
+            } else if let Some(dir) = history_path.parent()
                 && prune_session_history(dir, 50).is_err()
                 && !notified
             {
                 notify_session_event(SessionEvent::SaveFailed);
             }
-        }
-    });
+        });
+    }
+
+    fn session_path(&self) -> PathBuf {
+        self.root.join("session.json")
+    }
+
+    fn session_history_path(&self, session_id: &str) -> PathBuf {
+        session_history_dir(&self.root).join(format!("{session_id}.json"))
+    }
+}
+
+pub fn save_session_async(tabs: Vec<SessionTab>) {
+    let Some(root) = config_root() else {
+        return;
+    };
+    SessionStore::new(root).save_async(tabs);
 }
 
 pub fn poll_session_events() -> Vec<SessionEvent> {
@@ -83,14 +106,6 @@ fn session_event_bus() -> &'static SessionEventBus {
 
 fn notify_session_event(event: SessionEvent) {
     let _ = session_event_bus().sender.send(event);
-}
-
-fn session_path() -> Option<PathBuf> {
-    config_root().map(|root| root.join("session.json"))
-}
-
-fn session_history_path(session_id: &str) -> Option<PathBuf> {
-    config_root().map(|root| session_history_dir(&root).join(format!("{session_id}.json")))
 }
 
 fn session_history_dir(root: &Path) -> PathBuf {
@@ -203,11 +218,9 @@ fn prune_session_history(dir: &Path, keep: usize) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
     #[test]
     fn parse_session_tabs_reads_theme_and_id() {
         let content = r#"{
@@ -290,23 +303,14 @@ mod tests {
 
     #[test]
     fn save_session_emits_event_on_failure() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempdir().expect("tempdir");
-        let base = temp.path().to_path_buf();
-        let root = base.join("oxide");
+        let root = temp.path().join("oxide");
         std::fs::create_dir_all(&root).expect("create root");
         let session_path = root.join("session.json");
         std::fs::create_dir_all(&session_path).expect("create session dir");
-
-        let prev_config = std::env::var_os("OX_CONFIG_HOME");
-        let prev_allow = std::env::var_os("OX_TEST_ALLOW_CONFIG");
-        unsafe {
-            std::env::set_var("OX_CONFIG_HOME", &base);
-            std::env::set_var("OX_TEST_ALLOW_CONFIG", "1");
-        }
         let _ = poll_session_events();
 
-        save_session_async(vec![SessionTab {
+        SessionStore::new(root).save_async(vec![SessionTab {
             tab_id: 1,
             path: PathBuf::from("/"),
             theme_name: String::new(),
@@ -320,17 +324,6 @@ mod tests {
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
-        }
-
-        unsafe {
-            match prev_config {
-                Some(value) => std::env::set_var("OX_CONFIG_HOME", value),
-                None => std::env::remove_var("OX_CONFIG_HOME"),
-            }
-            match prev_allow {
-                Some(value) => std::env::set_var("OX_TEST_ALLOW_CONFIG", value),
-                None => std::env::remove_var("OX_TEST_ALLOW_CONFIG"),
-            }
         }
 
         assert!(
