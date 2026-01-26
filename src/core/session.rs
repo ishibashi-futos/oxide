@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::thread;
 
 use crate::config::config_root;
@@ -12,6 +13,11 @@ pub fn load_session_tabs() -> Vec<SessionTab> {
         return Vec::new();
     };
     load_session_tabs_from(&path)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionEvent {
+    SaveFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,19 +35,54 @@ pub fn save_session_async(tabs: Vec<SessionTab>) {
     let payload = build_session_payload(&tabs, &session_id);
     let history_path = session_history_path(&session_id);
     thread::spawn(move || {
-        if let Err(error) = write_session_atomic(&path, payload.as_bytes()) {
-            eprintln!("session save failed: {error}");
+        let mut notified = false;
+        if write_session_atomic(&path, payload.as_bytes()).is_err() && !notified {
+            notify_session_event(SessionEvent::SaveFailed);
+            notified = true;
         }
         if let Some(path) = history_path {
-            if let Err(error) = write_session_atomic(&path, payload.as_bytes()) {
-                eprintln!("session history save failed: {error}");
+            if write_session_atomic(&path, payload.as_bytes()).is_err() {
+                if !notified {
+                    notify_session_event(SessionEvent::SaveFailed);
+                }
             } else if let Some(dir) = path.parent()
-                && let Err(error) = prune_session_history(dir, 50)
+                && prune_session_history(dir, 50).is_err()
+                && !notified
             {
-                eprintln!("session history prune failed: {error}");
+                notify_session_event(SessionEvent::SaveFailed);
             }
         }
     });
+}
+
+pub fn poll_session_events() -> Vec<SessionEvent> {
+    let bus = session_event_bus();
+    let receiver = bus.receiver.lock().expect("session event lock");
+    let mut events = Vec::new();
+    while let Ok(event) = receiver.try_recv() {
+        events.push(event);
+    }
+    events
+}
+
+struct SessionEventBus {
+    sender: mpsc::Sender<SessionEvent>,
+    receiver: Mutex<mpsc::Receiver<SessionEvent>>,
+}
+
+fn session_event_bus() -> &'static SessionEventBus {
+    static BUS: OnceLock<SessionEventBus> = OnceLock::new();
+    BUS.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel();
+        SessionEventBus {
+            sender,
+            receiver: Mutex::new(receiver),
+        }
+    })
+}
+
+fn notify_session_event(event: SessionEvent) {
+    let _ = session_event_bus().sender.send(event);
 }
 
 fn session_path() -> Option<PathBuf> {
@@ -162,7 +203,11 @@ fn prune_session_history(dir: &Path, keep: usize) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
     use tempfile::tempdir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
     #[test]
     fn parse_session_tabs_reads_theme_and_id() {
         let content = r#"{
@@ -241,5 +286,54 @@ mod tests {
         assert!(!names.contains(&format!("{}.json", Uuid::from_u128(5))));
         assert!(names.contains(&format!("{}.json", Uuid::from_u128(6))));
         assert!(names.contains(&format!("{}.json", Uuid::from_u128(55))));
+    }
+
+    #[test]
+    fn save_session_emits_event_on_failure() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let file_path = temp.path().join("config-file");
+        std::fs::write(&file_path, b"nope").expect("write");
+
+        let prev_config = std::env::var_os("OX_CONFIG_HOME");
+        let prev_allow = std::env::var_os("OX_TEST_ALLOW_CONFIG");
+        unsafe {
+            std::env::set_var("OX_CONFIG_HOME", &file_path);
+            std::env::set_var("OX_TEST_ALLOW_CONFIG", "1");
+        }
+        let _ = poll_session_events();
+
+        save_session_async(vec![SessionTab {
+            tab_id: 1,
+            path: PathBuf::from("/"),
+            theme_name: String::new(),
+        }]);
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut events = Vec::new();
+        while Instant::now() < deadline {
+            events = poll_session_events();
+            if !events.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        unsafe {
+            match prev_config {
+                Some(value) => std::env::set_var("OX_CONFIG_HOME", value),
+                None => std::env::remove_var("OX_CONFIG_HOME"),
+            }
+            match prev_allow {
+                Some(value) => std::env::set_var("OX_TEST_ALLOW_CONFIG", value),
+                None => std::env::remove_var("OX_TEST_ALLOW_CONFIG"),
+            }
+        }
+
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::SaveFailed))
+        );
     }
 }

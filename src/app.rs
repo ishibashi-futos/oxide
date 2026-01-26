@@ -5,9 +5,10 @@ use std::time::{Duration, Instant};
 
 use crate::config::Config;
 use crate::core::{
-    ColorTheme, ColorThemeId, Entry, SessionTab, ShellCommandError, ShellCommandRequest,
-    ShellEvent, ShellExecutionResult, ShellPermission, ShellWorker, SlashCommand,
-    SlashCommandError, list_entries, load_session_tabs, parse_slash_command, save_session_async,
+    ColorTheme, ColorThemeId, Entry, SessionEvent, SessionTab, ShellCommandError,
+    ShellCommandRequest, ShellEvent, ShellExecutionResult, ShellPermission, ShellWorker,
+    SlashCommand, SlashCommandError, list_entries, load_session_tabs, parse_slash_command,
+    poll_session_events, save_session_async,
 };
 use crate::error::{AppError, AppResult};
 use crate::tabs::{TabSummary, TabsEvent, TabsState};
@@ -641,6 +642,20 @@ impl App {
                 ShellEvent::Failed(error) => {
                     self.shell_output_view.append_stderr_line(&error);
                     self.slash_feedback = Some(self.timed_feedback(error, FeedbackStatus::Error));
+                }
+            }
+        }
+    }
+
+    pub fn poll_session_events(&mut self) {
+        for event in poll_session_events() {
+            match event {
+                SessionEvent::SaveFailed => {
+                    self.slash_feedback =
+                        Some(self.timed_feedback(
+                            "session: save failed".to_string(),
+                            FeedbackStatus::Error,
+                        ));
                 }
             }
         }
