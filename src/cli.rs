@@ -69,8 +69,30 @@ pub fn self_update_intro(env: &dyn VersionEnv, cargo_version: &str) -> String {
     format!("self-update: current version {tag}")
 }
 
+fn build_version_tag() -> Option<&'static str> {
+    option_env!("OX_BUILD_VERSION").and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
+
+fn version_tag_for_output(
+    env: &dyn VersionEnv,
+    cargo_version: &str,
+    build_tag: Option<&str>,
+) -> String {
+    if let Some(tag) = build_tag {
+        return tag.to_string();
+    }
+    current_version_tag(env, cargo_version)
+}
+
 pub fn version_line(env: &dyn VersionEnv, cargo_version: &str) -> String {
-    let tag = current_version_tag(env, cargo_version);
+    let tag = version_tag_for_output(env, cargo_version, build_version_tag());
     format!("ox {tag}")
 }
 
@@ -290,18 +312,27 @@ mod tests {
     fn version_line_uses_build_version() {
         let env = FakeEnv::new("v9.9.9");
 
-        let message = version_line(&env, "0.1.0");
+        let message = version_tag_for_output(&env, "0.1.0", Some("v9.9.9"));
 
-        assert_eq!(message, "ox v9.9.9");
+        assert_eq!(message, "v9.9.9");
     }
 
     #[test]
     fn version_line_falls_back_to_cargo_version() {
         let env = FakeEnv::empty();
 
-        let message = version_line(&env, "0.1.0");
+        let message = version_tag_for_output(&env, "0.1.0", None);
 
-        assert_eq!(message, "ox 0.1.0");
+        assert_eq!(message, "0.1.0");
+    }
+
+    #[test]
+    fn version_line_prefers_build_version_over_runtime() {
+        let env = FakeEnv::new("v1.2.3");
+
+        let message = version_tag_for_output(&env, "0.1.0", Some("v9.9.9"));
+
+        assert_eq!(message, "v9.9.9");
     }
 
     #[test]
