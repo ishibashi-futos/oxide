@@ -441,16 +441,14 @@ fn draw(
     }
     let notice = app.user_notice();
     let feedback = app.slash_feedback();
-    render_bottom_bar(
-        frame,
-        bottom,
+    let bottom_bar = crate::ui::bottom_bar::BottomBarState::new(
         metadata_display,
         metadata_status,
         git_display,
         notice.as_ref(),
         feedback,
-        theme,
     );
+    render_bottom_bar(frame, bottom, bottom_bar, theme);
     if let Some(slash_area) = slash {
         if app.slash_input_active() {
             let candidates = app.slash_candidates();
