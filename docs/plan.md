@@ -68,7 +68,7 @@ Goal: 「プロの道具」としての堅牢性を高めます。
 - [ ] `/shell {command}`: working directory 内で default shell でコマンド実行(PowerShell/Shell)
   - TODO: AllowedShell 機構は別途検討し、将来的に特定シェルを明示的に選べるようにする。
   - 既知事項: Windows の UNC パス (`\\server\share` / `\\?\UNC\server\share`) の比較が未対応。共有フォルダを使う環境では `PathEscapesWorkingDir` の誤検知が起きる可能性がある。
-- [ ] `search: ` UI と `/shell` などのスラッシュコマンドUIの統合
+- [x] `search: ` UI と `/shell` などのスラッシュコマンドUIの統合
 - [ ] `/` から始まるコマンド
   - [ ] `/cwd /path/to`: Path IntelliSence 付きの、`cd` 機能
   - [ ] `/help`: ヘルプドキュメントの閲覧
@@ -85,7 +85,7 @@ Goal: 「プロの道具」としての堅牢性を高めます。
   - [ ] `Ctrl + C` or `Cmd + C` でパスをクリップボードへ保存。
   - [ ] `Ctrl + V` or `Cmd + V` でクリップボード内のパス（外部からのドロップ含む）を現在地にコピー。
   - [ ] Value: OS標準の操作と一貫性のあるファイル管理ができる。
-- [ ] ファイルメタデータ取得のリフレッシュレート向上、先行読み込み等を駆使したユーザー体験の向上
+- [x] ファイルメタデータ取得のリフレッシュレート向上、先行読み込み等を駆使したユーザー体験の向上
 - [ ] セッション復元時、ネットワークドライブ等で遅延がある場合「接続中...」と表示しUIを固めない。
 - [x] タブごとにカラーテーマを設定できるようにする
   - [x] base, primary(選択・フォーカス), secondary(補助), semantic(success/warn/error/info), grayscaleなどの状態と、タブの色調とは分けて整理する。タブの彩度は、メインのボーダーカラーとして使われるので、はっきり見えつつsemantic・primary/secondaryを邪魔しない色調にする = 低〜中彩度・中明度の「寒色寄りニュートラル」で、最低5つのテーマを用意し、タブにアサインできるようにする
