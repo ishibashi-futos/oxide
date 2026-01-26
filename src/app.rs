@@ -3,11 +3,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::config::Config;
+use crate::config::{Config, ConfigEvent, poll_config_events};
 use crate::core::{
-    ColorTheme, ColorThemeId, Entry, SessionTab, ShellCommandError, ShellCommandRequest,
-    ShellEvent, ShellExecutionResult, ShellPermission, ShellWorker, SlashCommand,
-    SlashCommandError, list_entries, load_session_tabs, parse_slash_command, save_session_async,
+    ColorTheme, ColorThemeId, Entry, SessionEvent, SessionTab, ShellCommandError,
+    ShellCommandRequest, ShellEvent, ShellExecutionResult, ShellPermission, ShellWorker,
+    SlashCommand, SlashCommandError, list_entries, load_session_tabs, parse_slash_command,
+    poll_session_events, save_session_async,
 };
 use crate::error::{AppError, AppResult};
 use crate::tabs::{TabSummary, TabsEvent, TabsState};
@@ -641,6 +642,33 @@ impl App {
                 ShellEvent::Failed(error) => {
                     self.shell_output_view.append_stderr_line(&error);
                     self.slash_feedback = Some(self.timed_feedback(error, FeedbackStatus::Error));
+                }
+            }
+        }
+    }
+
+    pub fn poll_session_events(&mut self) {
+        for event in poll_session_events() {
+            match event {
+                SessionEvent::SaveFailed => {
+                    self.slash_feedback =
+                        Some(self.timed_feedback(
+                            "session: save failed".to_string(),
+                            FeedbackStatus::Error,
+                        ));
+                }
+            }
+        }
+    }
+
+    pub fn poll_config_events(&mut self) {
+        for event in poll_config_events() {
+            match event {
+                ConfigEvent::ConfigRootUnavailable => {
+                    self.slash_feedback = Some(self.timed_feedback(
+                        "config: not writable; set OX_CONFIG_HOME".to_string(),
+                        FeedbackStatus::Error,
+                    ));
                 }
             }
         }

@@ -74,6 +74,8 @@ pub fn run(mut app: App, opener: &dyn EntryOpener) -> AppResult<()> {
             theme_state.apply(event);
         }
         app.poll_shell_events();
+        app.poll_config_events();
+        app.poll_session_events();
         app.flush_session_save();
         let current_path = app.selected_entry_path();
         if metadata_cache_dir.as_ref() != Some(&app.current_dir) {

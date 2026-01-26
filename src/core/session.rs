@@ -1,17 +1,20 @@
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::thread;
 
 use crate::config::config_root;
 use uuid::Uuid;
 
 pub fn load_session_tabs() -> Vec<SessionTab> {
-    if cfg!(test) && std::env::var_os("OX_TEST_ALLOW_CONFIG").is_none() {
-        return Vec::new();
-    }
-    let Some(path) = session_path() else {
+    let Some(root) = config_root() else {
         return Vec::new();
     };
-    load_session_tabs_from(&path)
+    SessionStore::new(root).load_tabs()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionEvent {
+    SaveFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,35 +24,88 @@ pub struct SessionTab {
     pub theme_name: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionStore {
+    root: PathBuf,
+}
+
+impl SessionStore {
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    pub fn load_tabs(&self) -> Vec<SessionTab> {
+        load_session_tabs_from(&self.session_path())
+    }
+
+    pub fn save_async(&self, tabs: Vec<SessionTab>) {
+        let path = self.session_path();
+        let session_id = generate_session_id();
+        let payload = build_session_payload(&tabs, &session_id);
+        let history_path = self.session_history_path(&session_id);
+        thread::spawn(move || {
+            let mut notified = false;
+            if write_session_atomic(&path, payload.as_bytes()).is_err() && !notified {
+                notify_session_event(SessionEvent::SaveFailed);
+                notified = true;
+            }
+            if write_session_atomic(&history_path, payload.as_bytes()).is_err() {
+                if !notified {
+                    notify_session_event(SessionEvent::SaveFailed);
+                }
+            } else if let Some(dir) = history_path.parent()
+                && prune_session_history(dir, 50).is_err()
+                && !notified
+            {
+                notify_session_event(SessionEvent::SaveFailed);
+            }
+        });
+    }
+
+    fn session_path(&self) -> PathBuf {
+        self.root.join("session.json")
+    }
+
+    fn session_history_path(&self, session_id: &str) -> PathBuf {
+        session_history_dir(&self.root).join(format!("{session_id}.json"))
+    }
+}
+
 pub fn save_session_async(tabs: Vec<SessionTab>) {
-    let Some(path) = session_path() else {
+    let Some(root) = config_root() else {
         return;
     };
-    let session_id = generate_session_id();
-    let payload = build_session_payload(&tabs, &session_id);
-    let history_path = session_history_path(&session_id);
-    thread::spawn(move || {
-        if let Err(error) = write_session_atomic(&path, payload.as_bytes()) {
-            eprintln!("session save failed: {error}");
-        }
-        if let Some(path) = history_path {
-            if let Err(error) = write_session_atomic(&path, payload.as_bytes()) {
-                eprintln!("session history save failed: {error}");
-            } else if let Some(dir) = path.parent()
-                && let Err(error) = prune_session_history(dir, 50)
-            {
-                eprintln!("session history prune failed: {error}");
-            }
-        }
-    });
+    SessionStore::new(root).save_async(tabs);
 }
 
-fn session_path() -> Option<PathBuf> {
-    config_root().map(|root| root.join("session.json"))
+pub fn poll_session_events() -> Vec<SessionEvent> {
+    let bus = session_event_bus();
+    let receiver = bus.receiver.lock().expect("session event lock");
+    let mut events = Vec::new();
+    while let Ok(event) = receiver.try_recv() {
+        events.push(event);
+    }
+    events
 }
 
-fn session_history_path(session_id: &str) -> Option<PathBuf> {
-    config_root().map(|root| session_history_dir(&root).join(format!("{session_id}.json")))
+struct SessionEventBus {
+    sender: mpsc::Sender<SessionEvent>,
+    receiver: Mutex<mpsc::Receiver<SessionEvent>>,
+}
+
+fn session_event_bus() -> &'static SessionEventBus {
+    static BUS: OnceLock<SessionEventBus> = OnceLock::new();
+    BUS.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel();
+        SessionEventBus {
+            sender,
+            receiver: Mutex::new(receiver),
+        }
+    })
+}
+
+fn notify_session_event(event: SessionEvent) {
+    let _ = session_event_bus().sender.send(event);
 }
 
 fn session_history_dir(root: &Path) -> PathBuf {
@@ -162,7 +218,9 @@ fn prune_session_history(dir: &Path, keep: usize) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
     use tempfile::tempdir;
+
     #[test]
     fn parse_session_tabs_reads_theme_and_id() {
         let content = r#"{
@@ -241,5 +299,37 @@ mod tests {
         assert!(!names.contains(&format!("{}.json", Uuid::from_u128(5))));
         assert!(names.contains(&format!("{}.json", Uuid::from_u128(6))));
         assert!(names.contains(&format!("{}.json", Uuid::from_u128(55))));
+    }
+
+    #[test]
+    fn save_session_emits_event_on_failure() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("oxide");
+        std::fs::create_dir_all(&root).expect("create root");
+        let session_path = root.join("session.json");
+        std::fs::create_dir_all(&session_path).expect("create session dir");
+        let _ = poll_session_events();
+
+        SessionStore::new(root).save_async(vec![SessionTab {
+            tab_id: 1,
+            path: PathBuf::from("/"),
+            theme_name: String::new(),
+        }]);
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut events = Vec::new();
+        while Instant::now() < deadline {
+            events = poll_session_events();
+            if !events.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::SaveFailed))
+        );
     }
 }
